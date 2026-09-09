@@ -1,0 +1,70 @@
+package com.example.safeaccounts.api;
+
+import com.example.safeaccounts.service.AuthServiceException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.ProblemDetail;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+/**
+ * Единая обработка ошибок API в формате RFC 7807 ProblemDetail.
+ * Стектрейсы наружу не возвращаются; детали ошибок нейтральные.
+ */
+@RestControllerAdvice
+public class ApiExceptionHandler {
+
+    @ExceptionHandler(AuthServiceException.class)
+    public ResponseEntity<ProblemDetail> handleAuth(AuthServiceException e) {
+        HttpStatus status = switch (e.getReason()) {
+            case BAD_CREDENTIALS, WRONG_CURRENT_PASSWORD -> HttpStatus.UNAUTHORIZED;
+            case USER_LOCKED -> HttpStatus.LOCKED; // 423: учетная запись временно заблокирована
+            case USER_DISABLED -> HttpStatus.FORBIDDEN;
+            case USERNAME_TAKEN -> HttpStatus.CONFLICT;
+            case USER_NOT_FOUND -> HttpStatus.NOT_FOUND;
+        };
+        return ResponseEntity.status(status)
+                .body(ProblemDetail.forStatusAndDetail(status, e.getMessage()));
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ProblemDetail> handleValidation(IllegalArgumentException e) {
+        HttpStatus status = HttpStatus.BAD_REQUEST;
+        return ResponseEntity.status(status)
+                .body(ProblemDetail.forStatusAndDetail(status, neutralize(e.getMessage())));
+    }
+
+    /** Ошибки валидации jakarta.validation (например, короткий пароль). */
+    @ExceptionHandler(org.springframework.web.bind.MethodArgumentNotValidException.class)
+    public ResponseEntity<ProblemDetail> handleBeanValidation(
+            org.springframework.web.bind.MethodArgumentNotValidException e) {
+        HttpStatus status = HttpStatus.BAD_REQUEST;
+        String detail = e.getBindingResult().getFieldErrors().stream()
+                .findFirst()
+                .map(fe -> fe.getField() + " is invalid")
+                .orElse("Invalid request");
+        return ResponseEntity.status(status)
+                .body(ProblemDetail.forStatusAndDetail(status, detail));
+    }
+
+    /** Ошибки HttpMessageConverter (некорректный JSON и т.п.). */
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    public ResponseEntity<ProblemDetail> handleUnreadable(
+            org.springframework.http.converter.HttpMessageNotReadableException e) {
+        HttpStatus status = HttpStatus.BAD_REQUEST;
+        return ResponseEntity.status(status)
+                .body(ProblemDetail.forStatusAndDetail(status, "Malformed request body"));
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ProblemDetail> handleUnexpected(Exception e) {
+        // Стектрейс и внутренние детали наружу не раскрываются.
+        HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR;
+        return ResponseEntity.status(status)
+                .body(ProblemDetail.forStatusAndDetail(status, "Internal error"));
+    }
+
+    private static String neutralize(String message) {
+        return message == null ? "Invalid request" : message;
+    }
+}

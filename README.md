@@ -59,6 +59,8 @@
 | `APP_CRYPTO_KEYS_N_ID` | Ротация: идентификатор KEK N (не секрет) |
 | `APP_CRYPTO_KEYS_N_SECRET_BASE64` | Ротация: материал KEK N в base64 |
 | `APP_CRYPTO_KEYS_N_ACTIVE` | Ротация: активный KEK ровно один (`true`/`false`) |
+| `APP_ADMIN_USERNAME` | Bootstrap: имя первого администратора (создается только на пустой БД) |
+| `APP_ADMIN_PASSWORD` | Bootstrap: пароль первого администратора (не логируется) |
 | `SERVER_PORT` | Порт приложения (по умолчанию `8080`) |
 | `SPRING_PROFILES_ACTIVE` | Профиль: `default` или `docker` |
 
@@ -106,6 +108,32 @@ docker compose up -d
 - OpenAPI: `http://localhost:8080/api-docs`
 - Swagger UI: `http://localhost:8080/swagger-ui.html`
 - Health: `http://localhost:8080/actuator/health` (остальные actuator-эндпоинты закрыты)
+
+### Аутентификация (Task-04)
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `POST` | `/api/auth/register` | Регистрация (имя 3–64 `[a-z0-9._-]`, пароль ≥ 12 символов) |
+| `POST` | `/api/auth/login` | Логин; возвращает Bearer-токен (показывается один раз) |
+| `POST` | `/api/auth/logout` | Отзыв текущего Bearer-токена |
+| `GET` | `/api/me` | Данные текущего пользователя |
+| `POST` | `/api/me/password` | Смена пароля (все токены, кроме текущего, отзываются) |
+
+Пример:
+
+```bash
+token=$(curl -s -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"alice","password":"Str0ng-Passw0rd!"}' | jq -r .accessToken)
+curl http://localhost:8080/api/me -H "Authorization: Bearer $token"
+```
+
+- Токен: `sat_` + base64url, ≥ 256 бит энтропии (`SecureRandom`); срок жизни 24 ч.
+- В БД хранится только SHA-256 хэш токена; пароли — Argon2id (m=64МиБ, t=3, p=1).
+- Защита от перебора: после 5 неудачных входов аккаунт блокируется на 15 минут.
+- Аудит: LOGIN_SUCCESS/LOGIN_FAILURE, TOKEN_ISSUED/TOKEN_REVOKED,
+  USER_CREATED/USER_DISABLED/USER_ENABLED, PASSWORD_CHANGED (без секретов).
+- Ошибки — RFC 7807 ProblemDetail без стектрейсов.
 
 ## Безопасность
 

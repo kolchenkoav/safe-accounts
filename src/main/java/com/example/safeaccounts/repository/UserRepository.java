@@ -13,4 +13,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByUsername(String username);
 
     boolean existsByUsernameIgnoreCase(String username);
+
+    /** Используется bootstrap'ом администратора: сработать только на пустой БД. */
+    boolean existsBy();
 }

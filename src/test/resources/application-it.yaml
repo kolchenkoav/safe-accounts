@@ -19,3 +19,7 @@ logging:
 app:
   crypto:
     master-key-base64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY
+  # Bootstrap-админ: фиксированные тестовые значения, ТОЛЬКО тестовый профиль.
+  admin:
+    username: bootstrap-admin
+    password: B00tstrap-Admin-Pass!

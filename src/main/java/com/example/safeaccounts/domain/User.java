@@ -140,4 +140,32 @@ public class User {
     public Long getVersion() {
         return version;
     }
+
+    // -- доменные операции (вызываются только сервисным слоем, Task-04) ------
+
+    /** Заменяет хэш пароля (смена пароля). Аргумент — уже готовый Argon2id-хэш. */
+    public void changePasswordHash(String newPasswordHash, Instant at) {
+        this.passwordHash = newPasswordHash;
+        this.updatedAt = at;
+    }
+
+    /** Фиксирует состояние защиты от перебора после неудачной попытки входа. */
+    public void applyAuthState(int newFailedAttempts, java.time.Instant newLockedUntil, Instant at) {
+        this.failedAttempts = newFailedAttempts;
+        this.lockedUntil = newLockedUntil;
+        this.updatedAt = at;
+    }
+
+    /** Сбрасывает счетчик неудачных попыток и блокировку (успешный вход). */
+    public void clearAuthFailures(Instant at) {
+        this.failedAttempts = 0;
+        this.lockedUntil = null;
+        this.updatedAt = at;
+    }
+
+    /** Включает/отключает учетную запись (административная операция). */
+    public void setEnabled(boolean enabled, Instant at) {
+        this.enabled = enabled;
+        this.updatedAt = at;
+    }
 }
