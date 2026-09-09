@@ -51,6 +51,13 @@ public class AuditService {
     public static final String SECRET_DELETED = "SECRET_DELETED";
     public static final String SECRET_REVEALED = "SECRET_REVEALED";
 
+    /** Административные события (Task-06). В details — только имена/счетчики/key id. */
+    public static final String USER_CREATED_BY_ADMIN = "USER_CREATED_BY_ADMIN";
+    public static final String USER_RESET_PASSWORD = "USER_RESET_PASSWORD";
+    public static final String KEY_ROTATION_STARTED = "KEY_ROTATION_STARTED";
+    public static final String KEY_ROTATION_COMPLETED = "KEY_ROTATION_COMPLETED";
+    public static final String KEY_ROTATION_FAILED = "KEY_ROTATION_FAILED";
+
     /**
      * Записывает событие аудита, привязанное к объекту (Task-05: записи сейфа).
      * objectType/objectId — только нечувствительные идентификаторы (например,

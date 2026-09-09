@@ -163,6 +163,29 @@ curl "http://localhost:8080/api/vault/<id>?reveal=true" -H "Authorization: Beare
   (только идентификаторы записей, без секретов).
 - Ошибка расшифровки возвращает нейтральный ProblemDetail без деталей.
 
+### Администрирование (Task-06)
+
+Все эндпоинты требуют роль `ADMIN` (`/api/admin/**` закрыт на уровне
+SecurityConfig + `@PreAuthorize` + проверка в сервисе — defense in depth).
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/admin/users?page=0&size=20` | Список пользователей (без хэшей паролей и wrapped DEK) |
+| `POST` | `/api/admin/users` | Создание пользователя (`username`, `password`, `role`) |
+| `POST` | `/api/admin/users/{id}/enable` | Включение учетной записи |
+| `POST` | `/api/admin/users/{id}/disable` | Отключение учетной записи |
+| `POST` | `/api/admin/users/{id}/reset-password` | Сброс пароля (`newPassword`) + отзыв всех токенов пользователя |
+| `GET` | `/api/admin/audit` | Просмотр аудита: пагинация, фильтры `type`, `userId`, `from`, `to` |
+| `POST` | `/api/admin/crypto/rewrap-deks` | Ротация KEK: перепаковка DEK всех пользователей активным ключом |
+
+- Ротация идемпотентна: пользователи уже на активном KEK пропускаются;
+  повторный запуск безопасен. Если старый ключ недоступен — понятная ошибка
+  (409 ProblemDetail), уже перепакованные пользователи сохраняются.
+- Аудит ротации: `KEY_ROTATION_STARTED` / `KEY_ROTATION_COMPLETED` /
+  `KEY_ROTATION_FAILED`; в деталях — только нечувствительные key id и счетчики.
+- Аудит админ-действий: `USER_CREATED_BY_ADMIN`, `USER_RESET_PASSWORD`,
+  `USER_DISABLED`, `USER_ENABLED` (без паролей и секретов).
+
 ## Безопасность
 
 Полные правила проекта см. в `AGENTS.md`. Ключевые моменты:

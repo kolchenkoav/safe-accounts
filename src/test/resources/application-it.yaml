@@ -14,11 +14,19 @@ logging:
     root: WARN
     org.testcontainers: INFO
 
-# Криптомодуль: тестовый фиксированный KEK — только в тестовом профиле (AGENTS.md).
-# Ключ синтетический, вне тестов запрещен; 32 байта в base64.
+# Криптомодуль: тестовые фиксированные KEK — только в тестовом профиле (AGENTS.md).
+# Ключи синтетические, вне тестов запрещены; по 32 байта в base64.
+# Заданы два ключа для сценария ротации Task-06: 'old' неактивен (только
+# расшифровка), 'primary' активен. AdminApiIT симулирует пользователей на
+# старом ключе, перепаковывая их через POST /api/admin/crypto/rewrap-deks.
 app:
   crypto:
-    master-key-base64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY
+    keys[0].id: old
+    keys[0].secret-base64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+    keys[0].active: false
+    keys[1].id: primary
+    keys[1].secret-base64: ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=
+    keys[1].active: true
   # Bootstrap-админ: фиксированные тестовые значения, ТОЛЬКО тестовый профиль.
   admin:
     username: bootstrap-admin

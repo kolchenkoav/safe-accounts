@@ -168,4 +168,15 @@ public class User {
         this.enabled = enabled;
         this.updatedAt = at;
     }
+
+    /**
+     * Заменяет wrapped-форму DEK при ротации KEK (Task-06): переупаковка тем же
+     * DEK новым активным ключом. Сам DEK не меняется — данные остаются читаемыми.
+     */
+    public void rewrapDek(String newDekWrapped, String newDekIv, String newKekId) {
+        this.dekWrapped = newDekWrapped;
+        this.dekIv = newDekIv;
+        this.dekKekId = newKekId;
+        this.updatedAt = Instant.now();
+    }
 }

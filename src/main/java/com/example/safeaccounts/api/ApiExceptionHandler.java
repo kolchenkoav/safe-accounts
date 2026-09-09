@@ -5,6 +5,7 @@ import com.example.safeaccounts.service.VaultException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.ProblemDetail;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -37,6 +38,14 @@ public class ApiExceptionHandler {
         };
         return ResponseEntity.status(status)
                 .body(ProblemDetail.forStatusAndDetail(status, e.getMessage()));
+    }
+
+    /** Отказ в доступе к административным функциям (Task-06): 403 без деталей. */
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ProblemDetail> handleAccessDenied(AccessDeniedException e) {
+        HttpStatus status = HttpStatus.FORBIDDEN;
+        return ResponseEntity.status(status)
+                .body(ProblemDetail.forStatusAndDetail(status, "Access denied"));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
