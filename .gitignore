@@ -11,3 +11,4 @@ target/
 *.pem
 *.key
 secrets/
+/.tasks/

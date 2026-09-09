@@ -1,0 +1,15 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+# Тестовые значения по умолчанию; @ServiceConnection переопределяет
+# url/username/password на параметры Testcontainers-контейнера.
+logging:
+  level:
+    root: WARN
+    org.testcontainers: INFO

@@ -1,0 +1,110 @@
+package com.example.safeaccounts.domain;
+
+import jakarta.persistence.*;
+
+import java.time.Instant;
+import java.util.UUID;
+
+/**
+ * Запись сейфа (сайт, логин, пароль, примечание).
+ * Все чувствительные поля хранятся только в зашифрованном виде
+ * (AES-256-GCM, base64); в списковых запросах пароль не возвращается.
+ */
+@Entity
+@Table(name = "vault_entries")
+public class VaultEntry {
+
+    @Id
+    @Column(nullable = false, updatable = false)
+    private UUID id;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "user_id", nullable = false,
+            foreignKey = @ForeignKey(name = "fk_vault_entries_user"))
+    private User user;
+
+    /** Шифротекст сайта (base64), открытое значение в БД отсутствует. */
+    @Column(name = "site_enc", nullable = false)
+    private String siteEnc;
+
+    /** Шифротекст логина (base64). */
+    @Column(name = "login_enc", nullable = false)
+    private String loginEnc;
+
+    /** Шифротекст пароля (base64), никогда не логируется. */
+    @Column(name = "password_enc", nullable = false)
+    private String passwordEnc;
+
+    /** Шифротекст примечания (base64), nullable. */
+    @Column(name = "notes_enc")
+    private String notesEnc;
+
+    @Column(name = "created_at", updatable = false)
+    private Instant createdAt;
+
+    @Column(name = "updated_at")
+    private Instant updatedAt;
+
+    @Version
+    private Long version;
+
+    protected VaultEntry() {
+        // для JPA
+    }
+
+    public VaultEntry(UUID id,
+                      User user,
+                      String siteEnc,
+                      String loginEnc,
+                      String passwordEnc,
+                      String notesEnc,
+                      Instant createdAt,
+                      Instant updatedAt,
+                      Long version) {
+        this.id = id;
+        this.user = user;
+        this.siteEnc = siteEnc;
+        this.loginEnc = loginEnc;
+        this.passwordEnc = passwordEnc;
+        this.notesEnc = notesEnc;
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
+        this.version = version;
+    }
+
+    public UUID getId() {
+        return id;
+    }
+
+    public User getUser() {
+        return user;
+    }
+
+    public String getSiteEnc() {
+        return siteEnc;
+    }
+
+    public String getLoginEnc() {
+        return loginEnc;
+    }
+
+    public String getPasswordEnc() {
+        return passwordEnc;
+    }
+
+    public String getNotesEnc() {
+        return notesEnc;
+    }
+
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
+    public Instant getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public Long getVersion() {
+        return version;
+    }
+}
