@@ -54,6 +54,7 @@
 | `POSTGRES_DB` | Имя БД (по умолчанию `safe_accounts`) |
 | `POSTGRES_USER` | Пользователь БД (обязателен) |
 | `POSTGRES_PASSWORD` | Пароль БД (обязателен) |
+| `POSTGRES_PASSWORD_FILE` | Альтернатива: файл с паролем БД (Docker secrets, читает entrypoint) |
 | `VAULT_MASTER_KEY_BASE64` | Мастер-ключ KEK в base64 (32 байта; алиас `APP_CRYPTO_MASTER_KEY_BASE64`) |
 | `VAULT_MASTER_KEY_FILE` | Либо путь к файлу с ключом base64 |
 | `APP_CRYPTO_KEYS_N_ID` | Ротация: идентификатор KEK N (не секрет) |
@@ -86,12 +87,39 @@
 
 ## Docker Compose
 
+### Режим 1 — простой локальный (dev), секреты через `.env`
+
 ```bash
-docker compose up -d
+cp .env.example .env   # заполните POSTGRES_USER/PASSWORD и VAULT_MASTER_KEY_BASE64
+docker compose up -d --build
+curl http://localhost:8080/actuator/health   # {"status":"UP"}
 ```
 
-Состав: приложение, PostgreSQL 16 (volume для данных), секреты БД и
-мастер-ключ передаются через переменные окружения из `.env`.
+Compose автоматически подхватывает `.env` (в git не попадает). Состав:
+приложение (сборка из `Dockerfile`), PostgreSQL 16 с volume и healthcheck
+`pg_isready`; `app` стартует после готовности БД (`depends_on: condition:
+service_healthy`) и сам проверяется по `/actuator/health`.
+
+### Режим 2 — Docker secrets (рекомендуется для прод-подобного запуска)
+
+1. Положите файлы в каталог `secrets/` (он в `.gitignore`):
+   - `secrets/db_password.txt` — пароль БД;
+   - `secrets/master_key.txt` — мастер-ключ KEK (base64, первая строка).
+2. Запустите с override-файлом:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --build
+```
+
+В этом режиме пароль БД передается приложению через файл
+(`/run/secrets/db_password`): entrypoint `scripts/docker-entrypoint.sh` читает
+`POSTGRES_PASSWORD_FILE` и экспортирует `SPRING_DATASOURCE_PASSWORD`; содержимое
+файла никогда не логируется. Мастер-ключ читается приложением через
+`VAULT_MASTER_KEY_FILE=/run/secrets/master_key`.
+
+В финальный образ не попадают ни `.env`, ни секреты, ни исходники (см.
+`.dockerignore`); контейнер работает от непривилегированного пользователя
+`vault` (не root), порт `8080` объявлен через `EXPOSE`.
 
 ## Полезные команды
 

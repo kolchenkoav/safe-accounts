@@ -10,5 +10,6 @@ target/
 !.env.example
 *.pem
 *.key
-secrets/
+secrets/*
+!secrets/.gitkeep
 /.tasks/
