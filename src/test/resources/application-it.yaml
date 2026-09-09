@@ -13,3 +13,9 @@ logging:
   level:
     root: WARN
     org.testcontainers: INFO
+
+# Криптомодуль: тестовый фиксированный KEK — только в тестовом профиле (AGENTS.md).
+# Ключ синтетический, вне тестов запрещен; 32 байта в base64.
+app:
+  crypto:
+    master-key-base64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY

@@ -1,5 +1,10 @@
 # Профиль docker: переопределяет только то, что отличается в контейнерах.
 # Все секреты по-прежнему приходят из окружения / файлов секретов (см. .env.example).
+app:
+  crypto:
+    master-key-base64: ${APP_CRYPTO_MASTER_KEY_BASE64:${VAULT_MASTER_KEY_BASE64:}}
+    master-key-file: ${APP_CRYPTO_MASTER_KEY_FILE:${VAULT_MASTER_KEY_FILE:}}
+
 spring:
   datasource:
     # В docker-compose сервис БД обычно называется postgres

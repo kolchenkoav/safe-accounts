@@ -57,6 +57,21 @@ vault:
     base64: ${VAULT_MASTER_KEY_BASE64:}
     file: ${VAULT_MASTER_KEY_FILE:}
 
+# Криптомодуль (Task-03). Оба режима задаются через окружение:
+#  - упрощенный: одиночный KEK из APP_CRYPTO_MASTER_KEY_BASE64 / APP_CRYPTO_MASTER_KEY_FILE;
+#  - расширенный (ротация): список KEK через переменные APP_CRYPTO_KEYS_0_ID,
+#    APP_CRYPTO_KEYS_0_SECRET_BASE64, APP_CRYPTO_KEYS_0_ACTIVE (индексы 0,1,2...).
+#    Spring Boot relaxed binding привязывает app.crypto.keys[n].* к CryptoProperties
+#    напрямую из окружения, поэтому секция keys в yaml не объявлена намеренно:
+#    материал ключей не должен появляться в конфигурационных файлах.
+# Значения по умолчанию отсутствуют намеренно: KeyManager обязан падать на старте,
+# если ни одного ключа не задано (кроме тестовых профилей).
+app:
+  crypto:
+    # Упрощенный режим: поддерживаются и новые, и прежние (Task-01) имена переменных.
+    master-key-base64: ${APP_CRYPTO_MASTER_KEY_BASE64:${VAULT_MASTER_KEY_BASE64:}}
+    master-key-file: ${APP_CRYPTO_MASTER_KEY_FILE:${VAULT_MASTER_KEY_FILE:}}
+
 springdoc:
   api-docs:
     path: /api-docs

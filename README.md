@@ -54,13 +54,28 @@
 | `POSTGRES_DB` | Имя БД (по умолчанию `safe_accounts`) |
 | `POSTGRES_USER` | Пользователь БД (обязателен) |
 | `POSTGRES_PASSWORD` | Пароль БД (обязателен) |
-| `VAULT_MASTER_KEY_BASE64` | Мастер-ключ KEK в base64 (32 байта) |
+| `VAULT_MASTER_KEY_BASE64` | Мастер-ключ KEK в base64 (32 байта; алиас `APP_CRYPTO_MASTER_KEY_BASE64`) |
 | `VAULT_MASTER_KEY_FILE` | Либо путь к файлу с ключом base64 |
+| `APP_CRYPTO_KEYS_N_ID` | Ротация: идентификатор KEK N (не секрет) |
+| `APP_CRYPTO_KEYS_N_SECRET_BASE64` | Ротация: материал KEK N в base64 |
+| `APP_CRYPTO_KEYS_N_ACTIVE` | Ротация: активный KEK ровно один (`true`/`false`) |
 | `SERVER_PORT` | Порт приложения (по умолчанию `8080`) |
 | `SPRING_PROFILES_ACTIVE` | Профиль: `default` или `docker` |
 
 Требуется ровно один источник мастер-ключа (`VAULT_MASTER_KEY_BASE64` **или**
 `VAULT_MASTER_KEY_FILE`); при отсутствии обоих приложение падает на старте.
+
+### Криптомодуль (KEK/DEK)
+
+- Каждому пользователю генерируется собственный DEK (AES-256).
+- DEK хранится в БД только в wrapped-виде (`users.dek_wrapped`, `dek_iv`,
+  `dek_kek_id`), обернутый мастер-ключом KEK (AES-256-GCM).
+- Секреты сейфа шифруются DEK пользователя: `base64(iv \|\| ciphertext \|\| tag)`,
+  IV — 12 байт, `SecureRandom`, уникальный на каждую операцию.
+- Поддерживается ротация KEK: в логах — только key id и усеченный SHA-256
+  fingerprint; материал ключей никогда не логируется.
+- В логах запрещены материал ключей и расшифрованные секреты; ошибки
+  расшифровки возвращают нейтральное сообщение без деталей.
 
 ## Профили
 
