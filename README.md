@@ -135,6 +135,34 @@ curl http://localhost:8080/api/me -H "Authorization: Bearer $token"
   USER_CREATED/USER_DISABLED/USER_ENABLED, PASSWORD_CHANGED (без секретов).
 - Ошибки — RFC 7807 ProblemDetail без стектрейсов.
 
+### Сейф (Task-05)
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/vault?page=0&size=20` | Пагинированный список записей (сайт, логин, метаданные; БЕЗ пароля и примечания) |
+| `POST` | `/api/vault` | Создание записи: `site`, `login`, `password`, `notes?` |
+| `GET` | `/api/vault/{id}` | Детальный просмотр (без пароля) |
+| `GET` | `/api/vault/{id}?reveal=true` | Детальный просмотр с расшифрованным паролем (факт reveal пишется в аудит) |
+| `PUT` | `/api/vault/{id}` | Обновление записи (все поля перешифровываются) |
+| `DELETE` | `/api/vault/{id}` | Удаление записи |
+
+Пример:
+
+```bash
+curl -X POST http://localhost:8080/api/vault \
+  -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+  -d '{"site":"https://example.com","login":"alice","password":"Entry-Pass-123!","notes":"work"}'
+curl "http://localhost:8080/api/vault/<id>?reveal=true" -H "Authorization: Bearer $token"
+```
+
+- Все чувствительные поля (site, login, password, notes) шифруются AES-256-GCM
+  персональным DEK владельца; в БД (`vault_entries.*_enc`) plaintext отсутствует.
+- Доступ только владельцу: чужая запись неотличима от несуществующей (единый 404).
+- Валидация: site/login ≤ 2048, password ≤ 4096, notes ≤ 8192 символов.
+- Аудит: SECRET_CREATED / SECRET_UPDATED / SECRET_DELETED / SECRET_REVEALED
+  (только идентификаторы записей, без секретов).
+- Ошибка расшифровки возвращает нейтральный ProblemDetail без деталей.
+
 ## Безопасность
 
 Полные правила проекта см. в `AGENTS.md`. Ключевые моменты:

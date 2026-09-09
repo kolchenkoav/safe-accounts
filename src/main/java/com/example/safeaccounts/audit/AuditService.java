@@ -45,6 +45,35 @@ public class AuditService {
     public static final String USER_DISABLED = "USER_DISABLED";
     public static final String USER_ENABLED = "USER_ENABLED";
     public static final String PASSWORD_CHANGED = "PASSWORD_CHANGED";
+    /** События записей сейфа (Task-05). Расшифрованные секреты в аудит запрещены. */
+    public static final String SECRET_CREATED = "SECRET_CREATED";
+    public static final String SECRET_UPDATED = "SECRET_UPDATED";
+    public static final String SECRET_DELETED = "SECRET_DELETED";
+    public static final String SECRET_REVEALED = "SECRET_REVEALED";
+
+    /**
+     * Записывает событие аудита, привязанное к объекту (Task-05: записи сейфа).
+     * objectType/objectId — только нечувствительные идентификаторы (например,
+     * "VaultEntry" и UUID записи). Ошибки записи логируются, но не пробрасываются.
+     */
+    public void record(User user, String type, UUID tokenId,
+                       String objectType, String objectId, Map<String, ?> details) {
+        try {
+            auditEventRepository.save(new AuditEvent(
+                    UUID.randomUUID(),
+                    user,
+                    tokenId,
+                    type,
+                    objectType,
+                    objectId,
+                    null,
+                    null,
+                    toJson(details),
+                    Instant.now()));
+        } catch (RuntimeException e) {
+            log.error("Failed to write audit event of type {}", type, e);
+        }
+    }
 
     /**
      * Записывает событие аудита. Ошибки записи логируются, но не пробрасываются.

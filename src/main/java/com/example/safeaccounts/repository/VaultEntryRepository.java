@@ -20,4 +20,8 @@ public interface VaultEntryRepository extends JpaRepository<VaultEntry, UUID> {
     Optional<VaultEntry> findByIdAndUser_Id(UUID id, UUID userId);
 
     long deleteByIdAndUser_Id(UUID id, UUID userId);
+
+    /** Пагинированный owner-scoped список (Task-05). */
+    org.springframework.data.domain.Page<VaultEntry> findAllByUser_Id(UUID userId,
+            org.springframework.data.domain.Pageable pageable);
 }

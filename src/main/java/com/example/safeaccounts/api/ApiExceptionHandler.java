@@ -1,6 +1,7 @@
 package com.example.safeaccounts.api;
 
 import com.example.safeaccounts.service.AuthServiceException;
+import com.example.safeaccounts.service.VaultException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.ProblemDetail;
@@ -22,6 +23,17 @@ public class ApiExceptionHandler {
             case USER_DISABLED -> HttpStatus.FORBIDDEN;
             case USERNAME_TAKEN -> HttpStatus.CONFLICT;
             case USER_NOT_FOUND -> HttpStatus.NOT_FOUND;
+        };
+        return ResponseEntity.status(status)
+                .body(ProblemDetail.forStatusAndDetail(status, e.getMessage()));
+    }
+
+    /** Ошибки операций над записями сейфа (Task-05): безопасные нейтральные ответы. */
+    @ExceptionHandler(VaultException.class)
+    public ResponseEntity<ProblemDetail> handleVault(VaultException e) {
+        HttpStatus status = switch (e.getReason()) {
+            case NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case DECRYPTION_FAILED -> HttpStatus.CONFLICT; // данные нечитаемы, но детали не раскрываем
         };
         return ResponseEntity.status(status)
                 .body(ProblemDetail.forStatusAndDetail(status, e.getMessage()));

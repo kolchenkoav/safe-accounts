@@ -107,4 +107,23 @@ public class VaultEntry {
     public Long getVersion() {
         return version;
     }
+
+    // -- доменные операции (вызываются только сервисным слоем, Task-05) ------
+
+    /**
+     * Полностью заменяет зашифрованные поля записи (обновление через API).
+     * Аргументы — готовые шифротексты; открытые значения сюда не передаются.
+     * Оптимистичная блокировка обеспечивается {@code @Version}.
+     */
+    public void updateEncrypted(String newSiteEnc,
+                                String newLoginEnc,
+                                String newPasswordEnc,
+                                String newNotesEnc,
+                                Instant at) {
+        this.siteEnc = newSiteEnc;
+        this.loginEnc = newLoginEnc;
+        this.passwordEnc = newPasswordEnc;
+        this.notesEnc = newNotesEnc;
+        this.updatedAt = at;
+    }
 }
