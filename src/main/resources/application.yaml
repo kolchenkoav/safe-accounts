@@ -1,0 +1,70 @@
+spring:
+  application:
+    name: safe-accounts
+  threads:
+    virtual:
+      enabled: true
+
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:safe_accounts}
+    username: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    validate-on-migrate: true
+
+server:
+  port: ${SERVER_PORT:8080}
+  error:
+    # RFC 7807 ProblemDetail, без стектрейсов клиенту
+    include-stacktrace: never
+    include-message: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # По умолчанию наружу доступен только health
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+  health:
+    db:
+      enabled: true
+
+# Мастер-ключ (KEK): материал ключа читается ТОЛЬКО из переменных окружения
+# или файла секрета. Значения по умолчанию отсутствуют намеренно:
+# без ключа приложение обязано падать на старте (см. AGENTS.md).
+vault:
+  master-key:
+    base64: ${VAULT_MASTER_KEY_BASE64:}
+    file: ${VAULT_MASTER_KEY_FILE:}
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    root: INFO
+    # Никогда не поднимать до DEBUG/TRACE: в этих логгерах могут оказаться секреты
+    org.springframework.security: INFO
