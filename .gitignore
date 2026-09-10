@@ -12,4 +12,5 @@ target/
 *.key
 secrets/*
 !secrets/.gitkeep
+backups/
 /.tasks/
