@@ -48,7 +48,8 @@ services:
       APP_API_DOCS_ENABLED: ${APP_API_DOCS_ENABLED:-false}
       APP_DEV_PROFILE: ${APP_DEV_PROFILE:-false}
     ports:
-      - "8080:8080"
+      # Хост-порт настраивается через APP_PORT (.env), внутренний порт контейнера — 8080.
+      - "${APP_PORT:-8080}:8080"
     healthcheck:
       # wget присутствует в alpine-образе (busybox).
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/actuator/health"]

@@ -142,7 +142,8 @@ docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --build
 | `APP_CRYPTO_KEYS_N_ACTIVE` | Ротация: активный KEK ровно один (`true`/`false`) |
 | `APP_ADMIN_USERNAME` | Bootstrap: имя первого администратора (создается только на пустой БД) |
 | `APP_ADMIN_PASSWORD` | Bootstrap: пароль первого администратора (не логируется) |
-| `SERVER_PORT` | Порт приложения (по умолчанию `8080`) |
+| `APP_PORT` | Хост-порт для Docker Compose (по умолчанию `8080`; внутренний порт контейнера всегда `8080`) |
+| `SERVER_PORT` | Порт приложения при локальном запуске без Docker (по умолчанию `8080`) |
 | `SPRING_PROFILES_ACTIVE` | Профиль: `default`, `docker` или `dev` |
 | `APP_RATE_LIMIT_WINDOW_SECONDS` | Окно rate limiter'а в секундах (по умолчанию `60`) |
 | `APP_RATE_LIMIT_MAX_REQUESTS` | Максимум запросов на IP за окно (по умолчанию `10`) |
