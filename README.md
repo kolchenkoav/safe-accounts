@@ -6,6 +6,31 @@
 Безопасность: AES-256-GCM для секретов, Argon2id для паролей, Bearer-токены
 (в БД только хэш), шифрование DEK мастер-ключом KEK, аудит операций.
 
+## Стек
+
+| Слой | Технология |
+|---|---|
+| Язык / рантайм | Java 21 |
+| Фреймворк | Spring Boot 3.3.x (Web, Security, Data JPA, Actuator, Validation) |
+| БД | PostgreSQL 16 |
+| Миграции | Flyway (схема меняется только миграциями, `ddl-auto=validate`) |
+| Криптография | AES-256-GCM (KEK/DEK), Argon2id, SHA-256 (хэш токенов) |
+| Тесты | JUnit 5, Testcontainers (PostgreSQL), MockMvc |
+| Эксплуатация | Docker (многоэтапный образ, non-root), Docker Compose + secrets |
+
+## Документация
+
+| Документ | Содержание |
+|---|---|
+| [`docs/deployment.md`](docs/deployment.md) | развертывание: окружение, переменные, секреты, Docker, TLS/reverse proxy, бэкапы |
+| [`docs/security.md`](docs/security.md) | как защищены пароли/токены/записи; действия при утечке и компрометации KEK |
+| [`docs/key-rotation.md`](docs/key-rotation.md) | процесс ротации мастер-ключа (7 шагов + аварийная) |
+| [`docs/backup-restore.md`](docs/backup-restore.md) | бэкап/восстановление, хранение KEK, DR-сценарий |
+| [`docs/threat-model.md`](docs/threat-model.md) | модель угроз: утечка БД/логов, кража токена/KEK, брутфорс, потеря ключа, DR |
+| [`docs/runbook.md`](docs/runbook.md) | операционная шпаргалка: здоровье, логи, бэкап, отзыв токенов, админ, ротация |
+| [`docs/security-checklist.md`](docs/security-checklist.md) | чек-лист безопасности со ссылками на тесты |
+| [`AGENTS.md`](AGENTS.md) | обязательные правила проекта |
+
 ## Требования
 
 - JDK 21+
@@ -42,10 +67,60 @@
    # {"status":"UP"}
    ```
 
-5. Веб-интерфейс (Task-11): откройте `http://localhost:8080/` — войдите
+5. Веб-интерфейс: откройте `http://localhost:8080/` — войдите
    пользователем, созданным через `POST /api/auth/register` (или через
    админ-API). Работа с сейфом: список/создание/просмотр/изменение/удаление
    записей; пароль отображается только по кнопке «Показать пароль».
+
+Первый администратор: при пустой БД задайте `APP_ADMIN_USERNAME` /
+`APP_ADMIN_PASSWORD` — bootstrap создаст его при старте.
+
+## Как запустить в Docker
+
+```bash
+cp .env.example .env    # заполните POSTGRES_USER/PASSWORD и VAULT_MASTER_KEY_BASE64
+docker compose up -d --build
+curl http://localhost:8080/actuator/health
+```
+
+Compose поднимает `db` (postgres:16-alpine, volume `pgdata`, healthcheck
+`pg_isready`) и `app` (сборка из `Dockerfile`; multi-stage; non-root
+пользователь `vault`; healthcheck по `/actuator/health`; стартует после
+готовности БД). Рекомендуемый прод-подобный режим — Docker secrets:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --build
+```
+
+Подробности, TLS/reverse proxy и чек-лист после развертывания —
+`docs/deployment.md`.
+
+## Как прогнать тесты
+
+```bash
+./mvnw test     # unit + интеграционные (Testcontainers: нужен Docker)
+./mvnw verify   # полная сборка с проверками
+```
+
+- Unit-тесты: криптография (AES-256-GCM, KEK/DEK), маскирование секретов,
+  сервисные правила.
+- Интеграционные: Flyway/JPA против реального PostgreSQL (Testcontainers),
+  security-тесты авторизации, e2e-потоки API, проверки отсутствия plaintext
+  в БД.
+- Внешние сервисы не требуются; тестовый мастер-ключ — фиксированный, только
+  в тестовом профиле, синтетические значения.
+
+## Где лежат скрипты
+
+| Скрипт | Назначение |
+|---|---|
+| `scripts/generate-master-key.sh` | генерация мастер-ключа KEK (base64, 32 байта) |
+| `scripts/backup.sh` | логический дамп БД (`pg_dump -Fc` внутри контейнера БД) в `backups/` |
+| `scripts/restore.sh` | восстановление дампа (останавливает app, идемпотентно, с проверками) |
+| `scripts/docker-entrypoint.sh` | entrypoint контейнера: читает `POSTGRES_PASSWORD_FILE` (Docker secrets), не логируя |
+
+Инструкции: `docs/backup-restore.md` (бэкап/восстановление/DR),
+`docs/key-rotation.md` (ротация ключа), `docs/runbook.md` (шпаргалка).
 
 ## Конфигурация
 
@@ -69,16 +144,16 @@
 | `APP_ADMIN_PASSWORD` | Bootstrap: пароль первого администратора (не логируется) |
 | `SERVER_PORT` | Порт приложения (по умолчанию `8080`) |
 | `SPRING_PROFILES_ACTIVE` | Профиль: `default`, `docker` или `dev` |
-| `APP_RATE_LIMIT_WINDOW_SECONDS` | Task-09: окно rate limiter'а в секундах (по умолчанию `60`) |
-| `APP_RATE_LIMIT_MAX_REQUESTS` | Task-09: максимум запросов на IP за окно (по умолчанию `10`) |
-| `APP_HSTS_ENABLED` | Task-09: Strict-Transport-Security (`true` за TLS-терминацией) |
-| `APP_API_DOCS_ENABLED` | Task-09: Swagger/OpenAPI (`true` только в dev) |
-| `APP_DEV_PROFILE` | Task-09: dev-профиль (открывает Swagger; в проде — запрещено) |
+| `APP_RATE_LIMIT_WINDOW_SECONDS` | Окно rate limiter'а в секундах (по умолчанию `60`) |
+| `APP_RATE_LIMIT_MAX_REQUESTS` | Максимум запросов на IP за окно (по умолчанию `10`) |
+| `APP_HSTS_ENABLED` | Strict-Transport-Security (`true` за TLS-терминацией) |
+| `APP_API_DOCS_ENABLED` | Swagger/OpenAPI (`true` только в dev) |
+| `APP_DEV_PROFILE` | dev-профиль (открывает Swagger; в проде — запрещено) |
 
 Требуется ровно один источник мастер-ключа (`VAULT_MASTER_KEY_BASE64` **или**
 `VAULT_MASTER_KEY_FILE`); при отсутствии обоих приложение падает на старте.
 
-### Веб-интерфейс (Task-11, опциональный)
+### Веб-интерфейс
 
 Встроенный минимальный веб-интерфейс: `http://localhost:8080/` (редирект на
 `/web/login`), страницы:
@@ -103,7 +178,7 @@
 - В списках и формах пароль не отображается; при редактировании пароль
   вводится заново (старый не выносится в HTML).
 - Неудачный вход — нейтральное сообщение; rate limiting по IP действует
-  и на веб-логин (Task-09).
+  и на веб-логин.
 - Веб-часть изолирована в отдельных filter chain и не меняет поведение API
   (Bearer-аутентификация, stateless, RFC 7807 — без изменений).
 
@@ -112,7 +187,7 @@
 - Каждому пользователю генерируется собственный DEK (AES-256).
 - DEK хранится в БД только в wrapped-виде (`users.dek_wrapped`, `dek_iv`,
   `dek_kek_id`), обернутый мастер-ключом KEK (AES-256-GCM).
-- Секреты сейфа шифруются DEK пользователя: `base64(iv \|\| ciphertext \|\| tag)`,
+- Секреты сейфа шифруются DEK пользователя: `base64(iv || ciphertext || tag)`,
   IV — 12 байт, `SecureRandom`, уникальный на каждую операцию.
 - Поддерживается ротация KEK: в логах — только key id и усеченный SHA-256
   fingerprint; материал ключей никогда не логируется.
@@ -123,9 +198,9 @@
 
 - `default` — локальный запуск (PostgreSQL на `localhost`).
 - `docker` — запуск в контейнерах (PostgreSQL на сервисе `postgres`).
-- `dev` — локальная разработка: открывает Swagger UI/OpenAPI (Task-09).
+- `dev` — локальная разработка: открывает Swagger UI/OpenAPI.
 
-## Наблюдаемость и защита поверхности (Task-09)
+## Наблюдаемость и защита поверхности
 
 - **Actuator**: наружу только `health`, `info` и `prometheus`;
   остальные эндпоинты (`env`, `beans`, `mappings`, `metrics`, ...) закрыты
@@ -198,13 +273,13 @@ docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --build
 
 ## API
 
-- OpenAPI: `http://localhost:8080/api-docs` (только в dev-профиле, Task-09)
-- Swagger UI: `http://localhost:8080/swagger-ui.html` (только в dev-профиле, Task-09)
+- OpenAPI: `http://localhost:8080/api-docs` (только в dev-профиле)
+- Swagger UI: `http://localhost:8080/swagger-ui.html` (только в dev-профиле)
 - Health: `http://localhost:8080/actuator/health`;
-  метрики: `/actuator/prometheus` (остальные actuator-эндпоинты закрыты, Task-09)
-- Rate limiting: 429 ProblemDetail при превышении лимита запросов на IP (Task-09)
+  метрики: `/actuator/prometheus` (остальные actuator-эндпоинты закрыты)
+- Rate limiting: 429 ProblemDetail при превышении лимита запросов на IP
 
-### Аутентификация (Task-04)
+### Аутентификация
 
 | Метод | Путь | Описание |
 |---|---|---|
@@ -230,7 +305,7 @@ curl http://localhost:8080/api/me -H "Authorization: Bearer $token"
   USER_CREATED/USER_DISABLED/USER_ENABLED, PASSWORD_CHANGED (без секретов).
 - Ошибки — RFC 7807 ProblemDetail без стектрейсов.
 
-### Сейф (Task-05)
+### Сейф
 
 | Метод | Путь | Описание |
 |---|---|---|
@@ -258,7 +333,7 @@ curl "http://localhost:8080/api/vault/<id>?reveal=true" -H "Authorization: Beare
   (только идентификаторы записей, без секретов).
 - Ошибка расшифровки возвращает нейтральный ProblemDetail без деталей.
 
-### Администрирование (Task-06)
+### Администрирование
 
 Все эндпоинты требуют роль `ADMIN` (`/api/admin/**` закрыт на уровне
 SecurityConfig + `@PreAuthorize` + проверка в сервисе — defense in depth).
@@ -290,3 +365,5 @@ SecurityConfig + `@PreAuthorize` + проверка в сервисе — defens
 - `.env` добавлен в `.gitignore`; в репозитории — только `.env.example` с плейсхолдерами.
 - `spring.jpa.hibernate.ddl-auto=validate` — схема меняется только миграциями Flyway.
 - Списки записей не возвращают пароли; расшифровка — только в явном детальном запросе.
+- Как защищены пароли/токены/записи и что делать при инцидентах — `docs/security.md`;
+  модель угроз — `docs/threat-model.md`.

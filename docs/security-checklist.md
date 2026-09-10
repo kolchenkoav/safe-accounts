@@ -86,7 +86,8 @@
 - [x] Перепаковка DEK пользователей под новый ключ:
       `POST /api/admin/crypto/rewrap-deks` (Task-06, только ADMIN).
 - [x] Тесты перешифрования: `CryptoIntegrationIT`, `AdminApiIT`.
-- [x] Процедура ротации задокументирована (см. `Plan.md`, Task-06/12).
+- [x] Процедура ротации задокументирована: `docs/key-rotation.md`
+      (Task-12; пошаговый процесс + аварийная ротация).
 
 ## 9. Прочие контуры
 
@@ -135,3 +136,30 @@
 | Чужие записи недоступны | ✅ `WebUiIT.otherUsersEntriesNotAccessible` |
 | CSRF защита работает | ✅ `WebUiIT.postWithoutCsrfTokenIsRejected` |
 | Веб-интерфейс не ломает API | ✅ `WebUiIT.apiStillWorksWithBearerTokenWhileWebUsesSession` |
+
+## Релизный чек-лист (Task-12)
+
+Статус на момент Task-12. Автоматизированные пункты подтверждаются
+`./mvnw verify`; ручные — процедурами из документации.
+
+| # | Пункт проверки | Статус | Подтверждение |
+|---|---|---|---|
+| 1 | Проект собирается | ✅ | `./mvnw verify` → BUILD SUCCESS |
+| 2 | Все тесты проходят | ✅ | `./mvnw verify`: все тесты зеленые (unit + IT, Testcontainers) |
+| 3 | Docker-образ собирается | ✅ | `docker compose build` / `up -d --build` (проверялось в Task-07/08); multi-stage, non-root `vault`, `.dockerignore` |
+| 4 | В коде нет секретов | ✅ | только `.env.example`/шаблоны; тестовый KEK — синтетический, только в `application-it.yaml`; миграции без секретов |
+| 5 | В логах нет секретов | ✅ | `SensitiveDataMasker` (unit-тесты), аудит без секретов (`VaultApiIT.vaultEventsAreAuditedWithoutSecrets`), тела запросов не логируются |
+| 6 | Бэкап выполняется | ✅ | `scripts/backup.sh` (pg_dump -Fc внутри контейнера; проверялся в Task-08); инструкция — `docs/backup-restore.md` |
+| 7 | Восстановление проверено | ✅ | `scripts/restore.sh` + DR-сценарий на чистой машине (Task-08); обязательная проверка чтения контрольной записи |
+| 8 | Ротация ключей документирована | ✅ | `docs/key-rotation.md` (7 шагов + аварийная) |
+| 9 | Аудит включен | ✅ | `AuditService`: LOGIN/TOKEN/USER/SECRET/KEY_ROTATION события; просмотр — `GET /api/admin/audit` |
+| 10 | Доступ к админке ограничен | ✅ | `/api/admin/**` — только `ADMIN` (SecurityConfig + `@PreAuthorize` + сервис); `SecurityChecksIT.userRoleCannotAccessAdminEndpoints` |
+| 11 | API-ошибки безопасны | ✅ | RFC 7807 ProblemDetail без стектрейсов; нейтральные 404/401/403 (`SecurityChecksIT.authorizationErrorsDoNotLeakInformation`) |
+
+## Соответствие критериям приемки Task-12
+
+| Критерий | Статус |
+|---|---|
+| Документация полная и понятная | ✅ README.md + docs/deployment.md, security.md, key-rotation.md, backup-restore.md, threat-model.md, runbook.md |
+| Релизный чек-лист выполнен | ✅ раздел «Релизный чек-лист (Task-12)» выше |
+| Проект можно передать на сопровождение | ✅ runbook + threat model + процедуры инцидентов |
