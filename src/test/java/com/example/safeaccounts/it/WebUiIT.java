@@ -158,6 +158,7 @@ class WebUiIT {
                         .session((org.springframework.mock.web.MockHttpSession) login.getRequest().getSession())
                         .with(csrf()))
                 .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/login?logout"))
                 .andReturn();
 
         // После выхода защищенная страница снова требует логин.
@@ -165,6 +166,40 @@ class WebUiIT {
                         .session((org.springframework.mock.web.MockHttpSession) logout.getRequest().getSession()))
                 .andExpect(status().is3xxRedirection())
                 .andExpect(redirectedUrlPattern("**/web/login"));
+    }
+
+    /**
+     * Баг-фикс: форма выхода в шаблонах отправляет POST /logout с CSRF-токеном;
+     * раньше POST попадал только в GET-маппинг контроллера и падал с 500.
+     */
+    @Test
+    void logoutViaHttpPostFormRedirectsToLoginAndInvalidatesSession() throws Exception {
+        registerUser("webuser4");
+        MvcResult login = loginViaWeb("webuser4");
+
+        MvcResult logout = mockMvc.perform(post("/logout")
+                        .session((org.springframework.mock.web.MockHttpSession) login.getRequest().getSession())
+                        .with(csrf()))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/login?logout"))
+                .andReturn();
+
+        // Повторный доступ с той же сессией запрещен: редирект на логин.
+        mockMvc.perform(get("/web/entries")
+                        .session((org.springframework.mock.web.MockHttpSession) logout.getRequest().getSession()))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrlPattern("**/web/login"));
+    }
+
+    /** POST /logout без CSRF-токена отклоняется (CSRF-защита сохранена). */
+    @Test
+    void logoutWithoutCsrfTokenIsRejected() throws Exception {
+        registerUser("webuser5");
+        MvcResult login = loginViaWeb("webuser5");
+
+        mockMvc.perform(post("/logout")
+                        .session((org.springframework.mock.web.MockHttpSession) login.getRequest().getSession()))
+                .andExpect(status().isForbidden());
     }
 
     // -- 2. CRUD записей через веб ----------------------------------------------

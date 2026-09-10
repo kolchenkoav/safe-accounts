@@ -3,10 +3,13 @@ package com.example.safeaccounts.api;
 import com.example.safeaccounts.security.SensitiveDataMasker;
 import com.example.safeaccounts.service.AuthServiceException;
 import com.example.safeaccounts.service.VaultException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.ProblemDetail;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -16,6 +19,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  */
 @RestControllerAdvice
 public class ApiExceptionHandler {
+
+    /**
+     * Серверный лог неожиданных ошибок (без раскрытия клиенту). В лог не
+     * попадают пароли/токены/ключи: стек-трейс исключения их не содержит.
+     */
+    private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
     @ExceptionHandler(AuthServiceException.class)
     public ResponseEntity<ProblemDetail> handleAuth(AuthServiceException e) {
@@ -80,6 +89,15 @@ public class ApiExceptionHandler {
                 .body(ProblemDetail.forStatusAndDetail(status, "Malformed request body"));
     }
 
+    /** Неверный HTTP-метод (например, POST там, где метод не описан) — 405, не 500. */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ProblemDetail> handleMethodNotSupported(
+            HttpRequestMethodNotSupportedException e) {
+        HttpStatus status = HttpStatus.METHOD_NOT_ALLOWED;
+        return ResponseEntity.status(status)
+                .body(ProblemDetail.forStatusAndDetail(status, "Method not allowed"));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ProblemDetail> handleUnexpected(Exception e) {
         // Task-11: ResponseStatusException уже несет корректный статус
@@ -90,7 +108,9 @@ public class ApiExceptionHandler {
                     .body(ProblemDetail.forStatusAndDetail(status,
                             status == HttpStatus.NOT_FOUND ? "Vault entry not found" : "Internal error"));
         }
-        // Стектрейс и внутренние детали наружу не раскрываются.
+        // Стектрейс и внутренние детали наружу не раскрываются,
+        // но ошибка логируется на сервере для диагностики.
+        log.error("Unhandled exception", e);
         HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR;
         return ResponseEntity.status(status)
                 .body(ProblemDetail.forStatusAndDetail(status, "Internal error"));

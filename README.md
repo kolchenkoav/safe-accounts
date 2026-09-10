@@ -167,7 +167,7 @@ docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --build
 | `/web/entries/{id}` | Просмотр (пароль — только по кнопке «Показать пароль») |
 | `/web/entries/{id}/edit` | Изменение записи |
 | POST `/web/entries/{id}/delete` | Удаление записи |
-| `/logout` | Выход (инвалидация сессии) |
+| `/logout` | Выход: POST-форма с CSRF-токеном (GET также поддержан), инвалидация сессии, редирект на `/web/login` |
 
 Безопасность:
 - Аутентификация — серверная HTTP-сессия (HttpOnly cookie); Bearer-токены
