@@ -23,6 +23,7 @@
 | Документ | Содержание |
 |---|---|
 | [`docs/deployment.md`](docs/deployment.md) | развертывание: окружение, переменные, секреты, Docker, TLS/reverse proxy, бэкапы |
+| [`docs/deployment-synology.md`](docs/deployment-synology.md) | пошаговое развертывание на Synology NAS: Container Manager/SSH, автозапуск после ребута, бэкапы по расписанию |
 | [`docs/security.md`](docs/security.md) | как защищены пароли/токены/записи; действия при утечке и компрометации KEK |
 | [`docs/key-rotation.md`](docs/key-rotation.md) | процесс ротации мастер-ключа (7 шагов + аварийная) |
 | [`docs/backup-restore.md`](docs/backup-restore.md) | бэкап/восстановление, хранение KEK, DR-сценарий |
