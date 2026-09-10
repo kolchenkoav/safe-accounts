@@ -1,0 +1,11 @@
+# Профиль dev (Task-09): документация API открыта.
+# Секреты по-прежнему задаются через окружение — этот файл их не содержит.
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+
+app:
+  security:
+    dev-profile: true

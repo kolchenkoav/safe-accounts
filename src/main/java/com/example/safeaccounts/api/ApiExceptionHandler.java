@@ -1,5 +1,6 @@
 package com.example.safeaccounts.api;
 
+import com.example.safeaccounts.security.SensitiveDataMasker;
 import com.example.safeaccounts.service.AuthServiceException;
 import com.example.safeaccounts.service.VaultException;
 import org.springframework.http.HttpStatus;
@@ -51,8 +52,10 @@ public class ApiExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ProblemDetail> handleValidation(IllegalArgumentException e) {
         HttpStatus status = HttpStatus.BAD_REQUEST;
+        // Task-09: маскирование на случай, если сообщение исключения содержит секрет.
         return ResponseEntity.status(status)
-                .body(ProblemDetail.forStatusAndDetail(status, neutralize(e.getMessage())));
+                .body(ProblemDetail.forStatusAndDetail(status,
+                        SensitiveDataMasker.mask(neutralize(e.getMessage()))));
     }
 
     /** Ошибки валидации jakarta.validation (например, короткий пароль). */

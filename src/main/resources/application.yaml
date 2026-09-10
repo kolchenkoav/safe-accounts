@@ -38,16 +38,23 @@ management:
   endpoints:
     web:
       exposure:
-        # По умолчанию наружу доступен только health
-        include: health
+        # Task-09: наружу только health, info и prometheus (метрики).
+        include: health,info,prometheus
   endpoint:
     health:
+      # Health не раскрывает чувствительные детали (Task-09)
       show-details: never
       probes:
+        # readiness/liveness probes для контейнеров (Task-09)
         enabled: true
   health:
     db:
       enabled: true
+  # Prometheus-метрики: только агрегаты (счетчики/гистограммы), без секретов
+  prometheus:
+    metrics:
+      export:
+        enabled: true
 
 # Мастер-ключ (KEK): материал ключа читается ТОЛЬКО из переменных окружения
 # или файла секрета. Значения по умолчанию отсутствуют намеренно:
@@ -71,12 +78,27 @@ app:
     # Упрощенный режим: поддерживаются и новые, и прежние (Task-01) имена переменных.
     master-key-base64: ${APP_CRYPTO_MASTER_KEY_BASE64:${VAULT_MASTER_KEY_BASE64:}}
     master-key-file: ${APP_CRYPTO_MASTER_KEY_FILE:${VAULT_MASTER_KEY_FILE:}}
+  security:
+    # Task-09: dev-профиль включает Swagger. В проде — только через env.
+    dev-profile: ${APP_DEV_PROFILE:false}
+    # Strict-Transport-Security (Task-09): включать, когда приложение работает
+    # за TLS-терминацией.
+    hsts-enabled: ${APP_HSTS_ENABLED:false}
+  # Task-09: базовый in-memory rate limiting по IP для login/register.
+  # При горизонтальном масштабировании требуется распределенный лимитер (Redis).
+  rate-limit:
+    window-seconds: ${APP_RATE_LIMIT_WINDOW_SECONDS:60}
+    max-requests: ${APP_RATE_LIMIT_MAX_REQUESTS:10}
 
 springdoc:
   api-docs:
     path: /api-docs
+    # Task-09: документация API включена только в dev-профиле
+    # (в application-dev.yaml). В prod/docker Swagger закрыт.
+    enabled: ${APP_API_DOCS_ENABLED:false}
   swagger-ui:
     path: /swagger-ui.html
+    enabled: ${APP_API_DOCS_ENABLED:false}
 
 logging:
   level:

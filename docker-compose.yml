@@ -38,6 +38,15 @@ services:
       VAULT_MASTER_KEY_FILE: ${VAULT_MASTER_KEY_FILE:-}
       APP_ADMIN_USERNAME: ${APP_ADMIN_USERNAME:-}
       APP_ADMIN_PASSWORD: ${APP_ADMIN_PASSWORD:-}
+      # Task-09: наблюдаемость и защита поверхности.
+      # Rate limiting по IP для login/register (in-memory, на инстанс).
+      APP_RATE_LIMIT_WINDOW_SECONDS: ${APP_RATE_LIMIT_WINDOW_SECONDS:-60}
+      APP_RATE_LIMIT_MAX_REQUESTS: ${APP_RATE_LIMIT_MAX_REQUESTS:-10}
+      # HSTS — включать только за TLS-терминацией.
+      APP_HSTS_ENABLED: ${APP_HSTS_ENABLED:-false}
+      # Swagger/OpenAPI в docker-профиле закрыт (Task-09).
+      APP_API_DOCS_ENABLED: ${APP_API_DOCS_ENABLED:-false}
+      APP_DEV_PROFILE: ${APP_DEV_PROFILE:-false}
     ports:
       - "8080:8080"
     healthcheck:

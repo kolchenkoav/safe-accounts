@@ -63,7 +63,12 @@
 | `APP_ADMIN_USERNAME` | Bootstrap: имя первого администратора (создается только на пустой БД) |
 | `APP_ADMIN_PASSWORD` | Bootstrap: пароль первого администратора (не логируется) |
 | `SERVER_PORT` | Порт приложения (по умолчанию `8080`) |
-| `SPRING_PROFILES_ACTIVE` | Профиль: `default` или `docker` |
+| `SPRING_PROFILES_ACTIVE` | Профиль: `default`, `docker` или `dev` |
+| `APP_RATE_LIMIT_WINDOW_SECONDS` | Task-09: окно rate limiter'а в секундах (по умолчанию `60`) |
+| `APP_RATE_LIMIT_MAX_REQUESTS` | Task-09: максимум запросов на IP за окно (по умолчанию `10`) |
+| `APP_HSTS_ENABLED` | Task-09: Strict-Transport-Security (`true` за TLS-терминацией) |
+| `APP_API_DOCS_ENABLED` | Task-09: Swagger/OpenAPI (`true` только в dev) |
+| `APP_DEV_PROFILE` | Task-09: dev-профиль (открывает Swagger; в проде — запрещено) |
 
 Требуется ровно один источник мастер-ключа (`VAULT_MASTER_KEY_BASE64` **или**
 `VAULT_MASTER_KEY_FILE`); при отсутствии обоих приложение падает на старте.
@@ -84,6 +89,32 @@
 
 - `default` — локальный запуск (PostgreSQL на `localhost`).
 - `docker` — запуск в контейнерах (PostgreSQL на сервисе `postgres`).
+- `dev` — локальная разработка: открывает Swagger UI/OpenAPI (Task-09).
+
+## Наблюдаемость и защита поверхности (Task-09)
+
+- **Actuator**: наружу только `health`, `info` и `prometheus`;
+  остальные эндпоинты (`env`, `beans`, `mappings`, `metrics`, ...) закрыты
+  (denyAll). `/actuator/health` не раскрывает деталей (`show-details: never`).
+- **Probes**: readiness/liveness (`/actuator/health/readiness`,
+  `/actuator/health/liveness`) включены для оркестраторов.
+- **Метрики**: Prometheus-экспорт на `/actuator/prometheus` (только агрегаты).
+- **Rate limiting**: in-memory лимитер по IP (скользящее окно) на
+  `POST /api/auth/login` и `POST /api/auth/register`;
+  по умолчанию 10 запросов/60 с на IP; превышение — `429` в формате
+  RFC 7807 ProblemDetail с заголовком `Retry-After`. При горизонтальном
+  масштабировании требуется распределенный лимитер (например, Redis) —
+  текущая реализация действует на каждый инстанс отдельно.
+- **Безопасные заголовки**: `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY`, `Cache-Control: no-store` на всех ответах;
+  `Strict-Transport-Security` включается флагом `APP_HSTS_ENABLED=true`
+  при работе за TLS-терминацией.
+- **Маскирование**: типовые чувствительные поля (`password`, `token`,
+  `secret`, `authorization`) маскируются (`SensitiveDataMasker`) — «последний
+  рубеж» против утечки секретов в логи и ответы; тела запросов никогда
+  не логируются.
+- **Swagger/OpenAPI**: закрыт по умолчанию; включается только в dev-профиле
+  (`APP_API_DOCS_ENABLED=true` + `APP_DEV_PROFILE=true`). В prod — отключен.
 
 ## Docker Compose
 
@@ -133,9 +164,11 @@ docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --build
 
 ## API
 
-- OpenAPI: `http://localhost:8080/api-docs`
-- Swagger UI: `http://localhost:8080/swagger-ui.html`
-- Health: `http://localhost:8080/actuator/health` (остальные actuator-эндпоинты закрыты)
+- OpenAPI: `http://localhost:8080/api-docs` (только в dev-профиле, Task-09)
+- Swagger UI: `http://localhost:8080/swagger-ui.html` (только в dev-профиле, Task-09)
+- Health: `http://localhost:8080/actuator/health`;
+  метрики: `/actuator/prometheus` (остальные actuator-эндпоинты закрыты, Task-09)
+- Rate limiting: 429 ProblemDetail при превышении лимита запросов на IP (Task-09)
 
 ### Аутентификация (Task-04)
 

@@ -31,3 +31,9 @@ app:
   admin:
     username: bootstrap-admin
     password: B00tstrap-Admin-Pass!
+  # Task-09: лимит limiter'а в ИТ-тестах повышен — тесты AuthFlowIT/VaultApiIT
+  # генерируют десятки auth-запросов с одного IP (127.0.0.1).
+  # Сценарии именно rate limiting проверяет ObservabilitySecurityIT.
+  rate-limit:
+    window-seconds: 60
+    max-requests: 10000
