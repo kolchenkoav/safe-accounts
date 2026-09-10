@@ -160,6 +160,47 @@ public class AdminService {
         return revoked;
     }
 
+    /**
+     * Смена роли пользователя администратором (Task-12, веб-админка).
+     * <p>
+     * Безопасность:
+     * <ul>
+     *   <li>смена СОБСТВЕННОЙ роли запрещена — защита от потери последнего
+     *       администратора (понизивший себя админ не смог бы вернуть роль);</li>
+     *   <li>допустимые роли — только ROLE_USER и ROLE_ADMIN;</li>
+     *   <li>событие USER_ROLE_CHANGED пишется в аудит (только имена/роли,
+     *       без секретов).</li>
+     * </ul>
+     *
+     * @throws AdminServiceException при попытке изменить собственную роль
+     * @throws IllegalArgumentException если роль не ROLE_USER/ROLE_ADMIN
+     */
+    @Transactional
+    public User changeRole(UUID userId, String newRole, User actor) {
+        requireAdmin(actor);
+        if (actor.getId().equals(userId)) {
+            throw new AdminServiceException("Changing own role is not allowed");
+        }
+        String roleValue = resolveRole(newRole);
+        User user = requireUser(userId);
+        String oldRole = user.getRole();
+        user.changeRole(roleValue, clock.instant());
+        userRepository.saveAndFlush(user);
+        auditService.record(user, AuditService.USER_ROLE_CHANGED, null,
+                Map.of("actor", actor.getUsername(),
+                        "oldRole", oldRole, "newRole", roleValue));
+        log.info("Admin '{}' changed role of user '{}': {} -> {}",
+                actor.getUsername(), user.getUsername(), oldRole, roleValue);
+        return user;
+    }
+
+    private static String resolveRole(String role) {
+        return switch (role == null ? "" : role) {
+            case "ROLE_USER", "ROLE_ADMIN" -> role;
+            default -> throw new IllegalArgumentException("Unsupported role");
+        };
+    }
+
     // -- аудит ----------------------------------------------------------------
 
     /**

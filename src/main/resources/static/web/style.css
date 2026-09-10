@@ -1,22 +1,79 @@
+/* ==========================================================================
+   safe-accounts — стили веб-интерфейса.
+   Темы: тёмная (по умолчанию) и светлая.
+   Цвета заданы CSS-переменными:
+     - :root и [data-theme="dark"] — тёмная тема (по умолчанию; применяется
+       даже при отсутствии атрибута, т.е. БЕЗ JavaScript);
+     - [data-theme="light"]       — светлая тема.
+   Переключение — static/web/theme.js; выбор хранится в localStorage
+   (клиентское хранилище, Cache-Control: no-store статике не мешает).
+   ========================================================================== */
+
+:root,
+[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0f172a;
+    --text: #e5e7eb;
+    --nav-bg: #111827;
+    --nav-text: #f9fafb;
+    --card-bg: #1f2937;
+    --card-shadow: rgba(0, 0, 0, 0.4);
+    --border: #374151;
+    --input-bg: #111827;
+    --input-text: #e5e7eb;
+    --input-border: #4b5563;
+    --accent: #2563eb;
+    --accent-text: #fff;
+    --danger: #dc2626;
+    --alert-error-bg: #450a0a;
+    --alert-error-text: #fecaca;
+    --alert-info-bg: #1e3a8a;
+    --alert-info-text: #dbeafe;
+}
+
+[data-theme="light"] {
+    color-scheme: light;
+    /* Светлая тема — прежняя палитра интерфейса. */
+    --bg: #f4f5f7;
+    --text: #222;
+    --nav-bg: #1f2937;
+    --nav-text: #f9fafb;
+    --card-bg: #fff;
+    --card-shadow: rgba(0, 0, 0, 0.12);
+    --border: #e5e7eb;
+    --input-bg: #fff;
+    --input-text: #222;
+    --input-border: #cbd5e0;
+    --accent: #2563eb;
+    --accent-text: #fff;
+    --danger: #dc2626;
+    --alert-error-bg: #fee2e2;
+    --alert-error-text: #991b1b;
+    --alert-info-bg: #dbeafe;
+    --alert-info-text: #1e3a8a;
+}
+
 body {
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-    background: #f4f5f7;
+    background: var(--bg);
     margin: 0;
     padding: 0;
-    color: #222;
+    color: var(--text);
 }
 
 nav {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
     padding: 0.6rem 1.2rem;
-    background: #1f2937;
-    color: #f9fafb;
+    background: var(--nav-bg);
+    color: var(--nav-text);
 }
 
 nav a, nav .link {
-    color: #f9fafb;
+    color: var(--nav-text);
     text-decoration: none;
     margin-right: 0.8rem;
 }
@@ -24,9 +81,9 @@ nav a, nav .link {
 .card {
     max-width: 720px;
     margin: 2rem auto;
-    background: #fff;
+    background: var(--card-bg);
     border-radius: 8px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+    box-shadow: 0 1px 3px var(--card-shadow);
     padding: 1.5rem 2rem;
 }
 
@@ -40,10 +97,68 @@ input[type="text"], input[type="password"], textarea {
     width: 100%;
     padding: 0.45rem;
     margin-top: 0.2rem;
-    border: 1px solid #cbd5e0;
+    border: 1px solid var(--input-border);
     border-radius: 4px;
     box-sizing: border-box;
     font: inherit;
+    background: var(--input-bg);
+    color: var(--input-text);
+}
+
+/* Task-12: элементы форм админки (select, компактные кнопки в таблице). */
+select {
+    padding: 0.4rem;
+    margin-top: 0.2rem;
+    border: 1px solid var(--input-border);
+    border-radius: 4px;
+    font: inherit;
+    background: var(--input-bg);
+    color: var(--input-text);
+}
+
+button.small {
+    margin-top: 0;
+    padding: 0.25rem 0.6rem;
+    font-size: 0.85rem;
+}
+
+td input[type="password"],
+td select {
+    width: auto;
+    margin-top: 0;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+td form.inline {
+    margin-right: 0.4rem;
+}
+
+form.filters {
+    display: flex;
+    gap: 0.6rem;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+form.filters label {
+    margin-top: 0;
+    font-size: 0.85rem;
+}
+
+form.filters input {
+    width: auto;
+    min-width: 160px;
+    margin-top: 0.1rem;
+}
+
+form.filters button {
+    margin-top: 0;
+}
+
+.card.wide {
+    max-width: 1080px;
 }
 
 button {
@@ -51,14 +166,14 @@ button {
     padding: 0.5rem 1.1rem;
     border: none;
     border-radius: 4px;
-    background: #2563eb;
-    color: #fff;
+    background: var(--accent);
+    color: var(--accent-text);
     cursor: pointer;
     font: inherit;
 }
 
 button.danger {
-    background: #dc2626;
+    background: var(--danger);
 }
 
 button.link {
@@ -69,6 +184,26 @@ button.link {
     margin: 0;
     text-decoration: underline;
     cursor: pointer;
+}
+
+/* Кнопка-переключатель темы (fragments.html :: themeToggle). */
+.theme-toggle {
+    margin-top: 0;
+    padding: 0.25rem 0.7rem;
+    background: transparent;
+    border: 1px solid currentColor;
+    border-radius: 4px;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+/* На странице логина общей навигации нет — кнопка размещается отдельно. */
+.theme-toggle-corner {
+    position: fixed;
+    top: 0.8rem;
+    right: 0.8rem;
+    z-index: 10;
 }
 
 form.inline {
@@ -84,7 +219,7 @@ table {
 th, td {
     text-align: left;
     padding: 0.5rem 0.4rem;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid var(--border);
 }
 
 dl {
@@ -111,8 +246,8 @@ dd {
 a.button {
     display: inline-block;
     padding: 0.4rem 0.9rem;
-    background: #2563eb;
-    color: #fff;
+    background: var(--accent);
+    color: var(--accent-text);
     border-radius: 4px;
     text-decoration: none;
     margin-top: 0.8rem;
@@ -125,13 +260,13 @@ a.button {
 }
 
 .alert-error {
-    background: #fee2e2;
-    color: #991b1b;
+    background: var(--alert-error-bg);
+    color: var(--alert-error-text);
 }
 
 .alert-info {
-    background: #dbeafe;
-    color: #1e3a8a;
+    background: var(--alert-info-bg);
+    color: var(--alert-info-text);
 }
 
 .pagination {

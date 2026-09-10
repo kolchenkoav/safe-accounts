@@ -1,0 +1,36 @@
+<!doctype html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru" data-theme="dark">
+    <!-- Каркас <head> (включая theme.js без defer, анти-FOUC) — общий фрагмент -->
+<head th:replace="~{fragments :: pageHead('Ротация ключей — safe-accounts')}"></head>
+    <body>
+        <!-- Общая навигация админки (включая переключатель темы) — фрагмент -->
+        <nav th:replace="~{fragments :: adminNav(${username})}"></nav>
+
+        <main class="card">
+            <h1>Ротация ключей шифрования</h1>
+
+            <div
+                class="alert alert-info"
+                th:if="${flashMessage}"
+                th:text="${flashMessage}"
+            ></div>
+            <div
+                class="alert alert-error"
+                th:if="${flashError}"
+                th:text="${flashError}"
+            ></div>
+
+            <p>
+                Перепаковывает (rewrap) DEK всех пользователей новым активным
+                мастер-ключом KEK. Операция идемпотентна: пользователи, чей DEK
+                уже завернут активным ключом, пропускаются. Материал ключей не
+                отображается — только количество перепакованных DEK и
+                идентификатор активного KEK.
+            </p>
+
+            <form th:action="@{/web/admin/crypto/rewrap-deks}" method="post">
+                <button type="submit">Rewrap DEKs</button>
+            </form>
+        </main>
+    </body>
+</html>

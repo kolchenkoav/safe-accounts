@@ -54,6 +54,8 @@ public class AuditService {
     /** Административные события (Task-06). В details — только имена/счетчики/key id. */
     public static final String USER_CREATED_BY_ADMIN = "USER_CREATED_BY_ADMIN";
     public static final String USER_RESET_PASSWORD = "USER_RESET_PASSWORD";
+    /** Task-12: смена роли пользователя администратором (веб-админка). */
+    public static final String USER_ROLE_CHANGED = "USER_ROLE_CHANGED";
     public static final String KEY_ROTATION_STARTED = "KEY_ROTATION_STARTED";
     public static final String KEY_ROTATION_COMPLETED = "KEY_ROTATION_COMPLETED";
     public static final String KEY_ROTATION_FAILED = "KEY_ROTATION_FAILED";

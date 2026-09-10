@@ -1,0 +1,47 @@
+<!doctype html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru" data-theme="dark">
+<!--
+    Общие фрагменты шаблонов веб-интерфейса; как страница не рендерится.
+    Важно: параметризованный фрагмент <head> обязан быть именно элементом
+    <head> этого документа — HTML-парсер игнорирует <head>, вложенный
+    в <body>, и атрибут th:fragment у такого элемента терялся бы.
+-->
+<head th:fragment="pageHead(pageTitle)">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title th:text="${pageTitle}">safe-accounts</title>
+    <link rel="stylesheet" th:href="@{/web/style.css}" />
+    <!-- Тема применяется как можно раньше (защита от мигания/FOUC); без defer. -->
+    <script th:src="@{/web/theme.js}"></script>
+</head>
+<body>
+    <!-- Общая навигация раздела администратора (Task-12). -->
+    <nav th:fragment="adminNav(username)">
+        <span>
+            <a th:href="@{/web/entries}">Сейф</a>
+            <a th:href="@{/web/admin/users}">Пользователи</a>
+            <a th:href="@{/web/admin/audit}">Аудит</a>
+            <a th:href="@{/web/admin/crypto}">Ключи</a>
+        </span>
+        <span class="user" th:text="${username}">admin</span>
+        <form th:action="@{/logout}" method="post" class="inline">
+            <button type="submit" class="link">Выйти</button>
+        </form>
+        <!-- Тема: тёмная/светлая, выбор в localStorage (тёмная по умолчанию) -->
+        <button type="button" th:replace="~{fragments :: themeToggle}"></button>
+    </nav>
+
+    <!--
+        Кнопка-переключатель темы. Логика — static/web/theme.js.
+        В HTML — нейтральная подпись «Тема», которая после загрузки страницы
+        заменяется скриптом на целевую тему («Светлая»/«Тёмная»).
+    -->
+    <button
+        type="button"
+        th:fragment="themeToggle"
+        class="theme-toggle"
+        data-theme-toggle
+        aria-label="Переключить тему"
+    >Тема</button>
+</body>
+</html>

@@ -1,17 +1,19 @@
 <!doctype html>
-<html xmlns:th="http://www.thymeleaf.org" lang="ru">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Записи — safe-accounts</title>
-        <link rel="stylesheet" th:href="@{/web/style.css}" />
-    </head>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru" data-theme="dark">
+    <!-- Каркас <head> (включая theme.js без defer, анти-FOUC) — общий фрагмент -->
+<head th:replace="~{fragments :: pageHead('Записи — safe-accounts')}"></head>
     <body>
         <nav>
             <span class="user" th:text="${username}">user</span>
-            <form th:action="@{/logout}" method="post" class="inline">
-                <button type="submit" class="link">Выйти</button>
-            </form>
+            <span>
+                <!-- Ссылка «Админка» — только ROLE_ADMIN (Task-12) -->
+                <a th:if="${isAdmin}" th:href="@{/web/admin/users}">Админка</a>
+                <form th:action="@{/logout}" method="post" class="inline">
+                    <button type="submit" class="link">Выйти</button>
+                </form>
+                <!-- Тема: тёмная/светлая, выбор в localStorage (тёмная по умолчанию) -->
+                <button type="button" th:replace="~{fragments :: themeToggle}"></button>
+            </span>
         </nav>
 
         <main class="card">

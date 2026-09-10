@@ -1,0 +1,107 @@
+<!doctype html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru" data-theme="dark">
+    <!-- Каркас <head> (включая theme.js без defer, анти-FOUC) — общий фрагмент -->
+<head th:replace="~{fragments :: pageHead('Аудит — safe-accounts')}"></head>
+    <body>
+        <!-- Общая навигация админки (включая переключатель темы) — фрагмент -->
+        <nav th:replace="~{fragments :: adminNav(${username})}"></nav>
+
+        <main class="card wide">
+            <h1>Журнал аудита</h1>
+
+            <div
+                class="alert alert-info"
+                th:if="${flashMessage}"
+                th:text="${flashMessage}"
+            ></div>
+            <div
+                class="alert alert-error"
+                th:if="${flashError}"
+                th:text="${flashError}"
+            ></div>
+
+            <!-- Фильтры — GET-форма (только чтение), без секретов -->
+            <form th:action="@{/web/admin/audit}" method="get" class="filters">
+                <label for="f-type">Тип события</label>
+                <input
+                    type="text"
+                    id="f-type"
+                    name="type"
+                    th:value="${type}"
+                    placeholder="Тип события"
+                />
+                <label for="f-user">User ID</label>
+                <input
+                    type="text"
+                    id="f-user"
+                    name="userId"
+                    th:value="${userId}"
+                    placeholder="UUID"
+                />
+                <label for="f-from">С</label>
+                <input
+                    type="text"
+                    id="f-from"
+                    name="from"
+                    th:value="${from}"
+                    placeholder="2025-01-01T00:00:00Z"
+                />
+                <label for="f-to">По</label>
+                <input
+                    type="text"
+                    id="f-to"
+                    name="to"
+                    th:value="${to}"
+                    placeholder="2025-12-31T23:59:59Z"
+                />
+                <button type="submit">Фильтровать</button>
+            </form>
+
+            <table th:if="${!events.isEmpty()}">
+                <thead>
+                    <tr>
+                        <th>Время</th>
+                        <th>Тип</th>
+                        <th>Объект</th>
+                        <th>IP</th>
+                        <th>Детали</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- detailsJson по построению не содержит секретов (AGENTS.md) -->
+                    <tr th:each="e : ${events}">
+                        <td
+                            th:text="${#temporals.format(e.createdAt, 'yyyy-MM-dd HH:mm:ss')}"
+                        ></td>
+                        <td th:text="${e.type}"></td>
+                        <td>
+                            <span
+                                th:if="${e.objectType}"
+                                th:text="${e.objectType} + ' ' + ${e.objectId}"
+                            ></span>
+                        </td>
+                        <td th:text="${e.ipAddress}"></td>
+                        <td><code th:text="${e.detailsJson}"></code></td>
+                    </tr>
+                </tbody>
+            </table>
+            <p th:if="${events.isEmpty()}">Событий нет.</p>
+
+            <div class="pagination" th:if="${totalPages > 1}">
+                <a
+                    th:if="${currentPage > 0}"
+                    th:href="@{/web/admin/audit(type=${type},userId=${userId},from=${from},to=${to},page=${currentPage - 1})}"
+                    >&larr;</a
+                >
+                <span
+                    th:text="${currentPage + 1} + ' / ' + ${totalPages}"
+                ></span>
+                <a
+                    th:if="${currentPage + 1 < totalPages}"
+                    th:href="@{/web/admin/audit(type=${type},userId=${userId},from=${from},to=${to},page=${currentPage + 1})}"
+                    >&rarr;</a
+                >
+            </div>
+        </main>
+    </body>
+</html>

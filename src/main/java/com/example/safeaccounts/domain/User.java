@@ -170,6 +170,16 @@ public class User {
     }
 
     /**
+     * Заменяет роль пользователя (административная операция, Task-12).
+     * Вызывается только сервисным слоем ({@code AdminService.changeRole}),
+     * который запрещает менять собственную роль.
+     */
+    public void changeRole(String newRole, Instant at) {
+        this.role = newRole;
+        this.updatedAt = at;
+    }
+
+    /**
      * Заменяет wrapped-форму DEK при ротации KEK (Task-06): переупаковка тем же
      * DEK новым активным ключом. Сам DEK не меняется — данные остаются читаемыми.
      */

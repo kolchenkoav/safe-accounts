@@ -1,14 +1,12 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Запись — safe-accounts</title>
-    <link rel="stylesheet" th:href="@{/web/style.css}">
-</head>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru" data-theme="dark">
+<!-- Каркас <head> (включая theme.js без defer, анти-FOUC) — общий фрагмент -->
+<head th:replace="~{fragments :: pageHead('Запись — safe-accounts')}"></head>
 <body>
 <nav>
     <a th:href="@{/web/entries}">&larr; К списку</a>
+    <!-- Тема: тёмная/светлая, выбор в localStorage (тёмная по умолчанию) -->
+    <button type="button" th:replace="~{fragments :: themeToggle}"></button>
 </nav>
 
 <main class="card">

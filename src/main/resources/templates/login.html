@@ -1,12 +1,12 @@
 <!doctype html>
-<html xmlns:th="http://www.thymeleaf.org" lang="ru">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Вход — safe-accounts</title>
-        <link rel="stylesheet" th:href="@{/web/style.css}" />
-    </head>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru" data-theme="dark">
+    <!-- Каркас <head> (включая theme.js без defer, анти-FOUC) — общий фрагмент -->
+<head th:replace="~{fragments :: pageHead('Вход — safe-accounts')}"></head>
     <body>
+        <!-- Общей навигации на логине нет: переключатель темы — отдельно -->
+        <div class="theme-toggle-corner">
+            <button type="button" th:replace="~{fragments :: themeToggle}"></button>
+        </div>
         <main class="card">
             <h1>safe-accounts</h1>
 

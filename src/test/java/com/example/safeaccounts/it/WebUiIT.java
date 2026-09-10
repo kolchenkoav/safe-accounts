@@ -3,6 +3,7 @@ package com.example.safeaccounts.it;
 import com.example.safeaccounts.repository.AuditEventRepository;
 import com.example.safeaccounts.repository.UserRepository;
 import com.example.safeaccounts.repository.VaultEntryRepository;
+import com.example.safeaccounts.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +26,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.model;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrlPattern;
@@ -68,6 +70,8 @@ class WebUiIT {
     VaultEntryRepository vaultEntryRepository;
     @Autowired
     TransactionTemplate transactionTemplate;
+    @Autowired
+    UserService userService;
 
     private static final String PASSWORD = "Str0ng-Passw0rd!";
     private static final String ENTRY_PASSWORD = "Entry-Pass-123!";
@@ -95,10 +99,15 @@ class WebUiIT {
 
     /** Регистрирует и логинится через веб-форму; возвращает сессию. */
     private MvcResult loginViaWeb(String username) throws Exception {
+        return loginViaWeb(username, PASSWORD);
+    }
+
+    /** Логинится через веб-форму с указанным паролем; возвращает результат. */
+    private MvcResult loginViaWeb(String username, String password) throws Exception {
         return mockMvc.perform(post("/web/login")
                         .with(csrf())
                         .param("username", username)
-                        .param("password", PASSWORD))
+                        .param("password", password))
                 .andExpect(status().is3xxRedirection())
                 .andExpect(redirectedUrl("/web/entries"))
                 .andReturn();
@@ -431,5 +440,309 @@ class WebUiIT {
                         .contentType("application/json")
                         .content("{\"site\":\"x\",\"login\":\"y\",\"password\":\"z\"}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    // -- 6. Веб-раздел администратора (Task-12) ----------------------------------
+
+    /** Создает администратора напрямую через UserService (для веб-админки). */
+    private String createAdmin(String username) {
+        userService.register(username, PASSWORD, "ROLE_ADMIN");
+        return username;
+    }
+
+    private UUID userIdOf(String username) {
+        return userRepository.findByUsername(username).orElseThrow().getId();
+    }
+
+    /** Админ видит раздел админки и ссылку «Админка» в навигации. */
+    @Test
+    void adminSeesAdminSectionAndNavLink() throws Exception {
+        createAdmin("webadm1");
+        MockHttpSessionHolder admin = login("webadm1");
+
+        mockMvc.perform(get("/web/entries").session(admin.session()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("/web/admin/users")));
+
+        mockMvc.perform(get("/web/admin/users").session(admin.session()))
+                .andExpect(status().isOk())
+                .andExpect(view().name("admin-users"))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Создать пользователя")));
+        mockMvc.perform(get("/web/admin/audit").session(admin.session()))
+                .andExpect(status().isOk())
+                .andExpect(view().name("admin-audit"));
+        mockMvc.perform(get("/web/admin/crypto").session(admin.session()))
+                .andExpect(status().isOk())
+                .andExpect(view().name("admin-crypto"));
+    }
+
+    /** Обычному пользователю раздел недоступен (403), ссылки в навигации нет. */
+    @Test
+    void regularUserGetsForbiddenOnAdminPagesAndSeesNoNavLink() throws Exception {
+        registerUser("webplain1");
+        MockHttpSessionHolder user = login("webplain1");
+
+        mockMvc.perform(get("/web/entries").session(user.session()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("/web/admin/users"))));
+
+        mockMvc.perform(get("/web/admin/users").session(user.session()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/web/admin/audit").session(user.session()))
+                .andExpect(status().isForbidden());
+        // POST-формы админки тоже закрыты.
+        mockMvc.perform(post("/web/admin/users")
+                        .session(user.session())
+                        .with(csrf())
+                        .param("username", "hax")
+                        .param("password", PASSWORD)
+                        .param("role", "ROLE_ADMIN"))
+                .andExpect(status().isForbidden());
+    }
+
+    /** Аноним перенаправляется на логин, а не получает 403. */
+    @Test
+    void anonymousIsRedirectedToLoginForAdminPages() throws Exception {
+        mockMvc.perform(get("/web/admin/users"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrlPattern("**/web/login"));
+        mockMvc.perform(get("/web/admin/audit"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrlPattern("**/web/login"));
+        mockMvc.perform(get("/web/admin/crypto"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrlPattern("**/web/login"));
+    }
+
+    /** Создание пользователя через форму: новый пользователь может войти. */
+    @Test
+    void createUserViaWebFormThenNewUserCanLogin() throws Exception {
+        createAdmin("webadm2");
+        MockHttpSessionHolder admin = login("webadm2");
+
+        mockMvc.perform(post("/web/admin/users")
+                        .session(admin.session())
+                        .with(csrf())
+                        .param("username", "webcreated")
+                        .param("password", PASSWORD)
+                        .param("role", "ROLE_USER"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/admin/users"))
+                .andExpect(flash().attributeExists("flashMessage"));
+
+        // Пароль никогда не возвращается в HTML страницы админки.
+        mockMvc.perform(get("/web/admin/users").session(admin.session()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString(PASSWORD))));
+
+        assertThat(auditEventRepository.findAll())
+                .anyMatch(e -> "USER_CREATED_BY_ADMIN".equals(e.getType()));
+
+        // Новый пользователь может залогиниться через веб.
+        login("webcreated");
+    }
+
+    /** Disable блокирует вход, enable возвращает доступ. */
+    @Test
+    void disableBlocksLoginAndEnableRestoresAccess() throws Exception {
+        registerUser("webtoggle");
+        createAdmin("webadm3");
+        MockHttpSessionHolder admin = login("webadm3");
+        UUID id = userIdOf("webtoggle");
+
+        mockMvc.perform(post("/web/admin/users/{id}/disable", id)
+                        .session(admin.session())
+                        .with(csrf()))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/admin/users"))
+                .andExpect(flash().attributeExists("flashMessage"));
+
+        // Отключенный пользователь не может войти (нейтральный редирект с ?error).
+        mockMvc.perform(post("/web/login")
+                        .with(csrf())
+                        .param("username", "webtoggle")
+                        .param("password", PASSWORD))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/login?error"));
+
+        mockMvc.perform(post("/web/admin/users/{id}/enable", id)
+                        .session(admin.session())
+                        .with(csrf()))
+                .andExpect(status().is3xxRedirection());
+
+        // Доступ возвращен.
+        login("webtoggle");
+    }
+
+    /** Сброс пароля через форму: старый пароль не работает, новый работает. */
+    @Test
+    void resetPasswordViaWebInvalidatesOldPassword() throws Exception {
+        registerUser("webreset");
+        createAdmin("webadm4");
+        MockHttpSessionHolder admin = login("webadm4");
+        UUID id = userIdOf("webreset");
+
+        mockMvc.perform(post("/web/admin/users/{id}/reset-password", id)
+                        .session(admin.session())
+                        .with(csrf())
+                        .param("newPassword", "Br4nd-New-Pass!"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/admin/users"))
+                .andExpect(flash().attributeExists("flashMessage"));
+
+        // Новый пароль не подставляется в HTML (никогда).
+        mockMvc.perform(get("/web/admin/users").session(admin.session()))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("Br4nd-New-Pass!"))));
+
+        assertThat(auditEventRepository.findAll())
+                .anyMatch(e -> "USER_RESET_PASSWORD".equals(e.getType()));
+
+        // Старый пароль больше не работает.
+        mockMvc.perform(post("/web/login")
+                        .with(csrf())
+                        .param("username", "webreset")
+                        .param("password", PASSWORD))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/login?error"));
+
+        // Новый пароль работает.
+        loginViaWeb("webreset", "Br4nd-New-Pass!");
+    }
+
+    /** Смена роли: повышение дает доступ к админке; своя роль — нейтральный запрет. */
+    @Test
+    void changeRolePromotesUserAndBlocksSelfChange() throws Exception {
+        registerUser("webpromote");
+        createAdmin("webadm5");
+        MockHttpSessionHolder admin = login("webadm5");
+        UUID targetId = userIdOf("webpromote");
+        UUID adminId = userIdOf("webadm5");
+
+        // Повышение до ROLE_ADMIN.
+        mockMvc.perform(post("/web/admin/users/{id}/change-role", targetId)
+                        .session(admin.session())
+                        .with(csrf())
+                        .param("role", "ROLE_ADMIN"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(flash().attributeExists("flashMessage"));
+
+        assertThat(userRepository.findById(targetId).orElseThrow().getRole())
+                .isEqualTo("ROLE_ADMIN");
+        assertThat(auditEventRepository.findAll())
+                .anyMatch(e -> "USER_ROLE_CHANGED".equals(e.getType()));
+
+        // Повышенный пользователь теперь видит раздел админки.
+        MockHttpSessionHolder promoted = login("webpromote");
+        mockMvc.perform(get("/web/admin/users").session(promoted.session()))
+                .andExpect(status().isOk());
+
+        // Смена СОБСТВЕННОЙ роли запрещена: нейтральная ошибка, роль не изменилась.
+        mockMvc.perform(post("/web/admin/users/{id}/change-role", adminId)
+                        .session(admin.session())
+                        .with(csrf())
+                        .param("role", "ROLE_USER"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(flash().attribute("flashError",
+                        "Операция отклонена: нельзя изменить роль собственной учетной записи"));
+
+        assertThat(userRepository.findById(adminId).orElseThrow().getRole())
+                .isEqualTo("ROLE_ADMIN");
+    }
+
+    /** Страница аудита рендерится с фильтром type и действительно фильтрует. */
+    @Test
+    void auditPageRendersWithTypeFilter() throws Exception {
+        createAdmin("webadm6");
+        MockHttpSessionHolder admin = login("webadm6");
+
+        // Логин админа уже записал LOGIN_SUCCESS; создаем пользователя — USER_CREATED_BY_ADMIN.
+        mockMvc.perform(post("/web/admin/users")
+                        .session(admin.session())
+                        .with(csrf())
+                        .param("username", "webaudit")
+                        .param("password", PASSWORD)
+                        .param("role", "ROLE_USER"))
+                .andExpect(status().is3xxRedirection());
+
+        mockMvc.perform(get("/web/admin/audit")
+                        .session(admin.session())
+                        .param("type", "USER_CREATED_BY_ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(view().name("admin-audit"))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("USER_CREATED_BY_ADMIN")));
+
+        // Фильтр работает: события другого типа в выдачу не попадают.
+        MvcResult filtered = mockMvc.perform(get("/web/admin/audit")
+                        .session(admin.session())
+                        .param("type", "USER_CREATED_BY_ADMIN"))
+                .andReturn();
+        String html = filtered.getResponse()
+                .getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(html).doesNotContain("LOGIN_SUCCESS");
+    }
+
+    /** Rewrap DEKs через веб: результат в flash-сообщении + события KEY_ROTATION_*. */
+    @Test
+    void rewrapDeksViaWebReturnsResultAndWritesAudit() throws Exception {
+        createAdmin("webadm7");
+        MockHttpSessionHolder admin = login("webadm7");
+
+        mockMvc.perform(post("/web/admin/crypto/rewrap-deks")
+                        .session(admin.session())
+                        .with(csrf()))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/admin/crypto"))
+                .andExpect(flash().attributeExists("flashMessage"));
+
+        assertThat(auditEventRepository.findAll())
+                .anyMatch(e -> "KEY_ROTATION_STARTED".equals(e.getType()));
+        assertThat(auditEventRepository.findAll())
+                .anyMatch(e -> "KEY_ROTATION_COMPLETED".equals(e.getType()));
+    }
+
+    // -- Тема оформления: тёмная по умолчанию, светлая — opt-in ----------------
+
+    /** На логине (без общей навигации) есть дефолтная тёмная тема и переключатель. */
+    @Test
+    void loginPageHasDarkThemeByDefaultAndThemeToggle() throws Exception {
+        mockMvc.perform(get("/web/login"))
+                .andExpect(status().isOk())
+                // Тёмная тема — по умолчанию: атрибут задан в разметке
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("data-theme=\"dark\"")))
+                // Тема применяется из <head> как можно раньше (анти-FOUC), без inline-скриптов
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("/web/theme.js")))
+                // Кнопка-переключатель присутствует и на логине
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("data-theme-toggle")));
+    }
+
+    /** На странице записей есть дефолтная тёмная тема и кнопка-переключатель. */
+    @Test
+    void entriesPageHasDarkThemeByDefaultAndThemeToggle() throws Exception {
+        registerUser("themuser");
+        MockHttpSessionHolder session = login("themuser");
+        mockMvc.perform(get("/web/entries").session(session.session()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("data-theme=\"dark\"")))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("data-theme-toggle")));
+    }
+
+    /** Скрипт темы отдается как статика без аутентификации (нужен на логине). */
+    @Test
+    void themeJsIsServedWithoutAuthentication() throws Exception {
+        mockMvc.perform(get("/web/theme.js"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("localStorage")));
     }
 }
