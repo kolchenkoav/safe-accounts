@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Новая запись — safe-accounts</title>
+    <link rel="stylesheet" th:href="@{/web/style.css}">
+</head>
+<body>
+<nav>
+    <a th:href="@{/web/entries}">&larr; К списку</a>
+</nav>
+
+<main class="card">
+    <h1>Новая запись</h1>
+
+    <!-- Пароль передается только в теле POST-запроса; в логи и шаблоны не попадает. -->
+    <form th:action="@{/web/entries}" th:object="${entryForm}" method="post">
+        <label for="site">Сайт</label>
+        <input type="text" id="site" th:field="*{site}" required maxlength="2048">
+
+        <label for="login">Логин</label>
+        <input type="text" id="login" th:field="*{login}" required maxlength="2048">
+
+        <label for="password">Пароль</label>
+        <input type="password" id="password" th:field="*{password}" required maxlength="4096">
+
+        <label for="notes">Примечание</label>
+        <textarea id="notes" th:field="*{notes}" maxlength="8192" rows="4"></textarea>
+
+        <button type="submit">Создать</button>
+    </form>
+</main>
+</body>
+</html>

@@ -13,29 +13,80 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.context.DelegatingSecurityContextRepository;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
+import org.springframework.security.web.context.RequestAttributeSecurityContextRepository;
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 
 /**
- * Конфигурация безопасности (Task-01, Task-04, Task-09).
+ * Конфигурация безопасности (Task-01, Task-04, Task-09, Task-11).
  *
- * <ul>
- *   <li>stateless: сессии не создаются;</li>
- *   <li>CSRF отключен — аутентификация через Bearer token;</li>
- *   <li>без аутентификации доступны только /actuator/health|info|prometheus
- *       (Task-09), POST /api/auth/login и POST /api/auth/register;</li>
- *   <li>остальные actuator-эндпоинты закрыты (denyAll);</li>
- *   <li>Swagger/OpenAPI открыт только в dev-профиле (Task-09);</li>
- *   <li>неаутентифицированные запросы получают 401 без стектрейса
- *       ({@link HttpStatusEntryPoint});</li>
- *   <li>Bearer-токен проверяется в {@link BearerTokenAuthenticationFilter};</li>
- *   <li>rate limiting по IP для login/register — в {@link RateLimitFilter}
- *       (Task-09), регистрируется раньше аутентификации.</li>
- * </ul>
+ * <p>Два независимых filter chain:
+ * <ol>
+ *   <li><b>Веб-интерфейс (Task-11)</b> — маршруты {@code /web/**}, {@code /}
+ *       и {@code /logout}: серверная HTTP-сессия (HttpOnly cookie),
+ *       CSRF-защита, rate limiting на логин. Аутентификация — по сессии,
+ *       Bearer-токен здесь не используется и в браузер не выдается.</li>
+ *   <li><b>API (Task-01..09)</b> — {@code /api/**}, {@code /actuator/**},
+ *       {@code /api-docs/**}, {@code /swagger-ui/**}: stateless, CSRF отключен
+ *       (Bearer-аутентификация) — поведение прежних задач не изменено.</li>
+ * </ol>
+ *
+ * <p>Безопасность Task-11: пароли форм не логируются; сессия — HttpOnly;
+ * CSRF включен для всех веб-форм (POST-маршруты); чужие записи недоступны
+ * (owner-scoped проверки в VaultService, единые с API).
  */
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
 public class SecurityConfig {
 
+    /**
+     * Цепочка веб-интерфейса (Task-11): сессии + CSRF.
+     * Матчится только на веб-маршруты, поэтому не влияет на API.
+     */
+    @Bean
+    public SecurityFilterChain webSecurityFilterChain(
+            HttpSecurity http,
+            RateLimitFilter rateLimitFilter) throws Exception {
+        // Дефолтный CsrfTokenRequestAttributeHandler: токен доступен и атрибутом
+        // запроса (для Thymeleaf-форм), и в HttpSessionCsrfTokenRepository.
+        CsrfTokenRequestAttributeHandler csrfHandler = new CsrfTokenRequestAttributeHandler();
+
+        http
+                .securityMatcher("/", "/web/**", "/logout")
+                .csrf(csrf -> csrf.csrfTokenRequestHandler(csrfHandler))
+                .sessionManagement(session ->
+                        session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
+                // Явно задаем сессионный репозиторий контекста: web chain хранит
+                // аутентификацию в HTTP-сессии, API chain остается stateless.
+                .securityContext(context -> context
+                        .securityContextRepository(new DelegatingSecurityContextRepository(
+                                new HttpSessionSecurityContextRepository(),
+                                new RequestAttributeSecurityContextRepository())))
+                // Rate limiting по IP и для веб-логина (Task-09/Task-11)
+                .addFilterBefore(rateLimitFilter, UsernamePasswordAuthenticationFilter.class)
+                .authorizeHttpRequests(auth -> auth
+                        // Статика стиля веб-интерфейса — без аутентификации
+                        .requestMatchers("/web/style.css").permitAll()
+                        // Страница логина и обработчик формы — без аутентификации
+                        .requestMatchers("/", "/web/login").permitAll()
+                        // Остальное — только аутентифицированным
+                        .anyRequest().authenticated())
+                .exceptionHandling(ex -> ex
+                        // Неаутентифицированный доступ к страницам — редирект на логин
+                        .authenticationEntryPoint(
+                                new org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint(
+                                        "/web/login")))
+                .formLogin(form -> form.disable())
+                .logout(logout -> logout.disable());
+        return http.build();
+    }
+
+    /**
+     * Цепочка API (Task-01..09) — поведение не изменено (Task-11:
+     * «веб-часть не должна ломать текущую Bearer-аутентификацию»).
+     */
     @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
@@ -43,6 +94,8 @@ public class SecurityConfig {
             RateLimitFilter rateLimitFilter,
             @Value("${app.security.dev-profile:false}") boolean devProfile) throws Exception {
         http
+                .securityMatcher("/api/**", "/actuator/**", "/api-docs/**",
+                        "/swagger-ui/**", "/swagger-ui.html")
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

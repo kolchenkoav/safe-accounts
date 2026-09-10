@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Изменение записи — safe-accounts</title>
+    <link rel="stylesheet" th:href="@{/web/style.css}">
+</head>
+<body>
+<nav>
+    <a th:href="@{/web/entries}">&larr; К списку</a>
+    <a th:href="@{/web/entries/{id}(id=${entryId})}">К записи</a>
+</nav>
+
+<main class="card">
+    <h1>Изменение записи</h1>
+
+    <div class="alert alert-error" th:if="${errorMessage}" th:text="${errorMessage}"></div>
+
+    <!-- Старый пароль в HTML не выносим (безопасность Task-11): поле пустое,
+         пароль нужно ввести заново. -->
+    <form th:action="@{/web/entries/{id}/edit(id=${entryId})}" th:object="${entryForm}" method="post">
+        <label for="site">Сайт</label>
+        <input type="text" id="site" th:field="*{site}" required maxlength="2048">
+
+        <label for="login">Логин</label>
+        <input type="text" id="login" th:field="*{login}" required maxlength="2048">
+
+        <label for="password">Пароль (введите заново)</label>
+        <input type="password" id="password" th:field="*{password}" required maxlength="4096">
+
+        <label for="notes">Примечание</label>
+        <textarea id="notes" th:field="*{notes}" maxlength="8192" rows="4"></textarea>
+
+        <button type="submit">Сохранить</button>
+    </form>
+</main>
+</body>
+</html>

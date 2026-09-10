@@ -1,0 +1,45 @@
+<!doctype html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Вход — safe-accounts</title>
+        <link rel="stylesheet" th:href="@{/web/style.css}" />
+    </head>
+    <body>
+        <main class="card">
+            <h1>safe-accounts</h1>
+
+            <div class="alert alert-error" th:if="${param.error}">
+                Неверное имя пользователя или пароль.
+            </div>
+            <div class="alert alert-info" th:if="${param.logout}">
+                Вы вышли из системы.
+            </div>
+
+            <form th:action="@{/web/login}" method="post" autocomplete="off">
+                <!-- CSRF-токен вставляется Spring Security автоматически как hidden input -->
+                <label for="username">Имя пользователя</label>
+                <input
+                    type="text"
+                    id="username"
+                    name="username"
+                    required
+                    maxlength="64"
+                    autofocus
+                />
+
+                <label for="password">Пароль</label>
+                <input
+                    type="password"
+                    id="password"
+                    name="password"
+                    required
+                    maxlength="128"
+                />
+
+                <button type="submit">Войти</button>
+            </form>
+        </main>
+    </body>
+</html>

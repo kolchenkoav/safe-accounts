@@ -99,6 +99,24 @@
 - [x] Валидация входящих данных через `jakarta.validation`.
 - [x] Контейнер работает от непривилегированного пользователя; образ многоэтапный.
 
+## 10. Веб-интерфейс (Task-11)
+
+- [x] Веб-часть отделена от API: отдельные filter chain в `SecurityConfig`
+      (API — stateless Bearer, веб — серверная сессия).
+- [x] CSRF-защита включена для всех веб-форм; POST без токена отклоняется (403).
+      Тест: `WebUiIT.postWithoutCsrfTokenIsRejected`.
+- [x] Токены доступа не хранятся в браузере: Bearer-токены в веб-сессию не
+      выдаются, сессия — HttpOnly cookie.
+- [x] Список записей не показывает пароль; пароль — только по явному действию
+      пользователя (POST `/web/entries/{id}/reveal`, факт — в аудите).
+      Тест: `WebUiIT.fullCrudCycleThroughWeb`.
+- [x] Старый пароль не выносится в HTML при редактировании (вводится заново).
+- [x] Чужие записи недоступны из веба (единые owner-scoped правила `VaultService`).
+      Тест: `WebUiIT.otherUsersEntriesNotAccessible`.
+- [x] Пароли форм не логируются (в `WebLoginController`/`WebVaultController`
+      логируется только факт операции, без значений).
+- [x] Веб-интерфейс не ломает API. Тест: `WebUiIT.apiStillWorksWithBearerTokenWhileWebUsesSession`.
+
 ## Соответствие критериям приемки Task-10
 
 | Критерий | Статус |
@@ -107,3 +125,13 @@
 | Подтверждена изоляция пользователей | ✅ `E2eFlowIT.secondUserHasNoAccessToFirstUsersEntries` и др. |
 | Подтверждено отсутствие plaintext-секретов в БД | ✅ `SecurityChecksIT.vaultEntriesTableHasNoPlaintextValues`, `usersTableHasNoPlaintextPasswordOrDek`, `authTokensTableHasNoRawTokens` |
 | Чек-лист безопасности заполнен и актуален | ✅ этот документ |
+
+## Соответствие критериям приемки Task-11
+
+| Критерий | Статус |
+|---|---|
+| Можно войти через браузер | ✅ `WebUiIT.loginSuccessCreatesSessionAndRedirectsToEntries`, `WebUiIT.loginFailureShowsNeutralError` |
+| Можно создать/посмотреть/изменить/удалить запись | ✅ `WebUiIT.fullCrudCycleThroughWeb` |
+| Чужие записи недоступны | ✅ `WebUiIT.otherUsersEntriesNotAccessible` |
+| CSRF защита работает | ✅ `WebUiIT.postWithoutCsrfTokenIsRejected` |
+| Веб-интерфейс не ломает API | ✅ `WebUiIT.apiStillWorksWithBearerTokenWhileWebUsesSession` |

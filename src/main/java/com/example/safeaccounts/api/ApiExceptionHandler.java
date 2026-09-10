@@ -82,6 +82,14 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ProblemDetail> handleUnexpected(Exception e) {
+        // Task-11: ResponseStatusException уже несет корректный статус
+        // (например 404 для чужих записей веб-интерфейса) — не превращаем в 500.
+        if (e instanceof org.springframework.web.server.ResponseStatusException rse) {
+            HttpStatus status = HttpStatus.valueOf(rse.getStatusCode().value());
+            return ResponseEntity.status(status)
+                    .body(ProblemDetail.forStatusAndDetail(status,
+                            status == HttpStatus.NOT_FOUND ? "Vault entry not found" : "Internal error"));
+        }
         // Стектрейс и внутренние детали наружу не раскрываются.
         HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR;
         return ResponseEntity.status(status)

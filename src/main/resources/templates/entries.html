@@ -1,0 +1,72 @@
+<!doctype html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Записи — safe-accounts</title>
+        <link rel="stylesheet" th:href="@{/web/style.css}" />
+    </head>
+    <body>
+        <nav>
+            <span class="user" th:text="${username}">user</span>
+            <form th:action="@{/logout}" method="post" class="inline">
+                <button type="submit" class="link">Выйти</button>
+            </form>
+        </nav>
+
+        <main class="card">
+            <h1>Записи сейфа</h1>
+
+            <div
+                class="alert alert-info"
+                th:if="${flashMessage}"
+                th:text="${flashMessage}"
+            ></div>
+
+            <a class="button" th:href="@{/web/entries/new}">+ Новая запись</a>
+
+            <table th:if="${!entries.isEmpty()}">
+                <thead>
+                    <tr>
+                        <th>Сайт</th>
+                        <th>Логин</th>
+                        <th>Обновлена</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Пароль и примечание в списке НЕ отображаются (Task-11) -->
+                    <tr th:each="entry : ${entries}">
+                        <td th:text="${entry.site}"></td>
+                        <td th:text="${entry.login}"></td>
+                        <td
+                            th:text="${entry.updatedAt != null ? #temporals.format(entry.updatedAt, 'yyyy-MM-dd HH:mm') : '-'}"
+                        ></td>
+                        <td>
+                            <a th:href="@{/web/entries/{id}(id=${entry.id})}"
+                                >Открыть</a
+                            >
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            <p th:if="${entries.isEmpty()}">Записей пока нет.</p>
+
+            <div class="pagination" th:if="${totalPages > 1}">
+                <a
+                    th:if="${currentPage > 0}"
+                    th:href="@{/web/entries(page=${currentPage - 1})}"
+                    >&larr;</a
+                >
+                <span
+                    th:text="${currentPage + 1} + ' / ' + ${totalPages}"
+                ></span>
+                <a
+                    th:if="${currentPage + 1 < totalPages}"
+                    th:href="@{/web/entries(page=${currentPage + 1})}"
+                    >&rarr;</a
+                >
+            </div>
+        </main>
+    </body>
+</html>

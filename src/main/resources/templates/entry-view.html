@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Запись — safe-accounts</title>
+    <link rel="stylesheet" th:href="@{/web/style.css}">
+</head>
+<body>
+<nav>
+    <a th:href="@{/web/entries}">&larr; К списку</a>
+</nav>
+
+<main class="card">
+    <h1 th:text="${entry.site}">Сайт</h1>
+
+    <dl>
+        <dt>Логин</dt>
+        <dd th:text="${entry.login}"></dd>
+
+        <dt>Пароль</dt>
+        <dd>
+            <!-- Пароль отображается только после явного POST /reveal (аудит SECRET_REVEALED) -->
+            <span th:if="${revealed}" th:text="${entry.password}"></span>
+            <form th:if="${!revealed}" th:action="@{/web/entries/{id}/reveal(id=${entryId})}" method="post" class="inline">
+                <button type="submit" class="link">Показать пароль</button>
+            </form>
+        </dd>
+
+        <dt>Примечание</dt>
+        <dd th:text="${entry.notes != null ? entry.notes : '-'}"></dd>
+
+        <dt>Создана</dt>
+        <dd th:text="${entry.createdAt != null ? #temporals.format(entry.createdAt, 'yyyy-MM-dd HH:mm') : '-'}"></dd>
+
+        <dt>Обновлена</dt>
+        <dd th:text="${entry.updatedAt != null ? #temporals.format(entry.updatedAt, 'yyyy-MM-dd HH:mm') : '-'}"></dd>
+    </dl>
+
+    <div class="actions">
+        <a class="button" th:href="@{/web/entries/{id}/edit(id=${entryId})}">Изменить</a>
+        <form th:action="@{/web/entries/{id}/delete(id=${entryId})}" method="post" class="inline"
+              onsubmit="return confirm('Удалить запись?')">
+            <button type="submit" class="danger">Удалить</button>
+        </form>
+    </div>
+</main>
+</body>
+</html>
