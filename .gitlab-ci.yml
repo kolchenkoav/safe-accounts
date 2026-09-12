@@ -80,6 +80,20 @@ docker:
     DOCKER_TLS_CERTDIR: ""
   needs:
     - build
+  before_script:
+    # Ожидаем готовность демона dind: GitLab стартует script сразу после создания
+    # контейнеров, не дожидаясь, пока поднимется сам Docker daemon внутри сервиса.
+    - |
+      i=0
+      until docker info >/dev/null 2>&1; do
+        i=$((i + 1))
+        if [ "$i" -ge 30 ]; then
+          echo "Docker daemon did not become ready in time"
+          exit 1
+        fi
+        echo "Waiting for Docker daemon (${i}/30)..."
+        sleep 2
+      done
   script:
     - |
       if [ -n "$CI_COMMIT_TAG" ]; then
