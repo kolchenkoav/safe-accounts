@@ -1,0 +1,6 @@
+# Override для Synology NAS: автозапуск БД после ребута и не публикуем БД наружу.
+services:
+  db:
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5432:5432"

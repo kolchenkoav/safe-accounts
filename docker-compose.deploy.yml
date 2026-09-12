@@ -1,0 +1,5 @@
+# Override для CI-деплоя: принудительно тянем образ из registry, не собираем на NAS.
+services:
+  app:
+    image: ${SAFE_ACCOUNTS_IMAGE:?SAFE_ACCOUNTS_IMAGE is required}
+    pull_policy: always
