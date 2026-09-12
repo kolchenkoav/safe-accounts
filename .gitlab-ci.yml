@@ -1,0 +1,158 @@
+# .gitlab-ci.yml — CI/CD для safe-accounts: тесты, сборка, Docker-образ, деплой на Synology NAS.
+
+stages:
+  - test
+  - build
+  - docker
+  - deploy
+  - cleanup
+
+variables:
+  # Общий Maven-кэш (папка .m2 внутри проекта) — см. cache ниже.
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
+
+default:
+  tags:
+    - docker
+
+cache:
+  key: maven-cache-jdk21
+  paths:
+    - .m2/repository
+
+# ---------------------------------------------------------------------------
+# Стадия test — unit-тесты (surefire) и интеграционные тесты
+# на Testcontainers (failsafe) через mvn verify.
+# ---------------------------------------------------------------------------
+test:
+  stage: test
+  image: maven:3.9-eclipse-temurin-21
+  services:
+    - name: docker:24.0.7-dind
+      alias: docker
+  variables:
+    # Демон Docker для Testcontainers поднимается в сервисе dind.
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  script:
+    # verify запускает surefire (unit) и failsafe (интеграционные) отчёты.
+    - mvn -B verify
+  artifacts:
+    when: always
+    reports:
+      junit:
+        - target/surefire-reports/TEST-*.xml
+        - target/failsafe-reports/TEST-*.xml
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+# ---------------------------------------------------------------------------
+# Стадия build — собираем исполняемый jar; тесты уже прошли на стадии test.
+# ---------------------------------------------------------------------------
+build:
+  stage: build
+  image: maven:3.9-eclipse-temurin-21
+  needs:
+    - test
+  script:
+    - mvn -B package -DskipTests
+  artifacts:
+    paths:
+      - target/safe-accounts.jar
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+# ---------------------------------------------------------------------------
+# Стадия docker — сборка linux/amd64 и публикация в registry GitLab.
+# Версия: тег (CI_COMMIT_TAG) либо 1.0.<номер пайплайна>.
+# ---------------------------------------------------------------------------
+docker:
+  stage: docker
+  image: docker:24.0.7
+  services:
+    - name: docker:24.0.7-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  needs:
+    - build
+  script:
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        VERSION=$CI_COMMIT_TAG
+      else
+        VERSION=1.0.$CI_PIPELINE_IID
+      fi
+    - echo "VERSION=$VERSION" > version.env
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build --platform linux/amd64 -t "$CI_REGISTRY_IMAGE:$VERSION" -t "$CI_REGISTRY_IMAGE:latest" .
+    - docker push "$CI_REGISTRY_IMAGE:$VERSION"
+    - docker push "$CI_REGISTRY_IMAGE:latest"
+  artifacts:
+    reports:
+      dotenv: version.env
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG
+
+# ---------------------------------------------------------------------------
+# Стадия deploy — синхронизация compose-файлов и обновление контейнера app
+# на NAS. Секреты (.env, secrets/) на NAS создаются вручную, CI их не трогает.
+# Локальные переменные ($CI_REGISTRY, $CI_REGISTRY_IMAGE, $VERSION) раскрываются
+# на раннере ДО ssh; NAS_REGISTRY_* раскрываются внутри команды на NAS.
+# ---------------------------------------------------------------------------
+deploy:
+  stage: deploy
+  image: docker:24.0.7
+  needs:
+    - docker
+  environment: synology
+  script:
+    # SSH-клиент раннера и приватный ключ для подключения к NAS.
+    - apk add --no-cache openssh-client
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - cp "$NAS_SSH_PRIVATE_KEY" ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+    - ssh-keyscan -H "$NAS_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+    # Синхронизируем compose-файлы (перезаписываются при каждом деплое).
+    - scp -i ~/.ssh/id_deploy docker-compose.yml docker-compose.synology.yml docker-compose.deploy.yml "$NAS_SSH_USER@$NAS_SSH_HOST:/volume1/docker/safe-accounts/"
+    # Логинимся Deploy token'ом и обновляем app: pull + up -d, без down.
+    - |
+      ssh -i ~/.ssh/id_deploy "$NAS_SSH_USER@$NAS_SSH_HOST" \
+        "cd /volume1/docker/safe-accounts && set -e && \
+         echo \"\$NAS_REGISTRY_TOKEN\" | docker login -u \"\$NAS_REGISTRY_USER\" --password-stdin \"$CI_REGISTRY\" && \
+         SAFE_ACCOUNTS_IMAGE=\"$CI_REGISTRY_IMAGE:$VERSION\" docker compose -f docker-compose.yml -f docker-compose.synology.yml -f docker-compose.deploy.yml pull app && \
+         SAFE_ACCOUNTS_IMAGE=\"$CI_REGISTRY_IMAGE:$VERSION\" docker compose -f docker-compose.yml -f docker-compose.synology.yml -f docker-compose.deploy.yml up -d"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG
+
+# ---------------------------------------------------------------------------
+# Стадия cleanup — удаляем на NAS старые образы: остаются 3 последние версии
+# и latest. Портируемая реализация для busybox/alpine: без head -n -N.
+# latest исключается фильтром; используемые контейнерами образы docker rmi
+# не удаляет; ошибки гасит финальный "|| true".
+# ---------------------------------------------------------------------------
+cleanup:
+  stage: cleanup
+  image: docker:24.0.7
+  needs:
+    - deploy
+  when: on_success
+  script:
+    - apk add --no-cache openssh-client
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - cp "$NAS_SSH_PRIVATE_KEY" ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+    - ssh-keyscan -H "$NAS_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+    # Список образов -> фильтр по нашему registry и исключение latest ->
+    # сортировка по версии (числовой сегмент тега) по убыванию -> удаляем все,
+    # кроме 3 самых свежих (awk 'NR > 3').
+    - |
+      ssh -i ~/.ssh/id_deploy "$NAS_SSH_USER@$NAS_SSH_HOST" \
+        "set -e && docker images --format '{{.Repository}}:{{.Tag}}' | \
+         awk -F: -v p=\"$CI_REGISTRY_IMAGE\" '\$1 == p && \$2 !~ /^latest$/ { split(\$2, t, /\\./); print t[length(t)] + 0, \$0 }' | \
+         sort -nr -k1,1 | awk 'NR > 3 { s = \$2; for (i = 3; i <= NF; i++) s = s OFS \$i; print s }' | \
+         xargs -r docker rmi -f || true"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG
