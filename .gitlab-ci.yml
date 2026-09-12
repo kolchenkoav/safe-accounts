@@ -44,7 +44,9 @@ test:
         - target/surefire-reports/TEST-*.xml
         - target/failsafe-reports/TEST-*.xml
   rules:
-    - if: $CI_COMMIT_BRANCH
+    # Выполняем тесты и для веток, и для тегов: иначе needs-цепочка деплоя по
+    # тегу развалится (build/docker/deploy получат skipped без артефактов build).
+    - if: $CI_COMMIT_BRANCH || $CI_COMMIT_TAG
 
 # ---------------------------------------------------------------------------
 # Стадия build — собираем исполняемый jar; тесты уже прошли на стадии test.
@@ -60,7 +62,8 @@ build:
     paths:
       - target/safe-accounts.jar
   rules:
-    - if: $CI_COMMIT_BRANCH
+    # Теги и ветки равнозначны (см. комментарий у джобы test).
+    - if: $CI_COMMIT_BRANCH || $CI_COMMIT_TAG
 
 # ---------------------------------------------------------------------------
 # Стадия docker — сборка linux/amd64 и публикация в registry GitLab.
@@ -113,16 +116,21 @@ deploy:
     - apk add --no-cache openssh-client
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
     - cp "$NAS_SSH_PRIVATE_KEY" ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+    # Первый контакт принимаем (accept-new); при желании после первого деплоя
+    # known_hosts можно зафиксировать вручную для детерминированной проверки.
     - ssh-keyscan -H "$NAS_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
     # Синхронизируем compose-файлы (перезаписываются при каждом деплое).
-    - scp -i ~/.ssh/id_deploy docker-compose.yml docker-compose.synology.yml docker-compose.deploy.yml "$NAS_SSH_USER@$NAS_SSH_HOST:/volume1/docker/safe-accounts/"
+    - scp -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes docker-compose.yml docker-compose.synology.yml docker-compose.deploy.yml "$NAS_SSH_USER@$NAS_SSH_HOST:/volume1/docker/safe-accounts/"
     # Логинимся Deploy token'ом и обновляем app: pull + up -d, без down.
+    # После up -d выходим из registry: не оставляем deploy token в
+    # ~/.docker/config.json на NAS (|| true — отказ logout не роняет джобу).
     - |
-      ssh -i ~/.ssh/id_deploy "$NAS_SSH_USER@$NAS_SSH_HOST" \
+      ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$NAS_SSH_USER@$NAS_SSH_HOST" \
         "cd /volume1/docker/safe-accounts && set -e && \
          echo \"\$NAS_REGISTRY_TOKEN\" | docker login -u \"\$NAS_REGISTRY_USER\" --password-stdin \"$CI_REGISTRY\" && \
          SAFE_ACCOUNTS_IMAGE=\"$CI_REGISTRY_IMAGE:$VERSION\" docker compose -f docker-compose.yml -f docker-compose.synology.yml -f docker-compose.deploy.yml pull app && \
-         SAFE_ACCOUNTS_IMAGE=\"$CI_REGISTRY_IMAGE:$VERSION\" docker compose -f docker-compose.yml -f docker-compose.synology.yml -f docker-compose.deploy.yml up -d"
+         SAFE_ACCOUNTS_IMAGE=\"$CI_REGISTRY_IMAGE:$VERSION\" docker compose -f docker-compose.yml -f docker-compose.synology.yml -f docker-compose.deploy.yml up -d; \
+         docker logout \"$CI_REGISTRY\" || true"
   rules:
     - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "main"
     - if: $CI_COMMIT_TAG
@@ -143,12 +151,14 @@ cleanup:
     - apk add --no-cache openssh-client
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
     - cp "$NAS_SSH_PRIVATE_KEY" ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+    # Первый контакт принимаем (accept-new); при желании после первого деплоя
+    # known_hosts можно зафиксировать вручную для детерминированной проверки.
     - ssh-keyscan -H "$NAS_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
     # Список образов -> фильтр по нашему registry и исключение latest ->
     # сортировка по версии (числовой сегмент тега) по убыванию -> удаляем все,
     # кроме 3 самых свежих (awk 'NR > 3').
     - |
-      ssh -i ~/.ssh/id_deploy "$NAS_SSH_USER@$NAS_SSH_HOST" \
+      ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$NAS_SSH_USER@$NAS_SSH_HOST" \
         "set -e && docker images --format '{{.Repository}}:{{.Tag}}' | \
          awk -F: -v p=\"$CI_REGISTRY_IMAGE\" '\$1 == p && \$2 !~ /^latest$/ { split(\$2, t, /\\./); print t[length(t)] + 0, \$0 }' | \
          sort -nr -k1,1 | awk 'NR > 3 { s = \$2; for (i = 3; i <= NF; i++) s = s OFS \$i; print s }' | \
