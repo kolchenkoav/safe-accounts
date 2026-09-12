@@ -149,6 +149,7 @@ SAFE_ACCOUNTS_IMAGE=registry.gitlab.com/kolchenkoav/safe-accounts:<предыд�
 | `denied: requested access to the resource is denied` при `pull app` | Deploy token не читает registry: проверьте scope `read_registry` у токена и значения `NAS_REGISTRY_USER`/`NAS_REGISTRY_TOKEN` |
 | Ошибка интерполяции `SAFE_ACCOUNTS_IMAGE is required` | Джоба `deploy` не получила версию (`version.env` из джобы `docker` через `needs`) либо compose-файлы на NAS не синхронизированы — перезапустите пайплайн |
 | Приложение не стартует: `VAULT master key not configured` | На NAS не заполнен `.env`: задайте ровно один источник KEK (`VAULT_MASTER_KEY_BASE64` или `VAULT_MASTER_KEY_FILE`), раздел 4 |
+| `ERROR: Cannot connect to the Docker daemon at tcp://docker:2375` при `docker build` | dind не успел подняться к моменту старта script (гонка старта). В джобе `docker` стоит wait-loop в `before_script` (до 30×2 с); если ошибка повторилась на перегруженном раннере — перезапустите джобу/пайплайн |
 
 ## 3. Шаг 1. Получить код на NAS (альтернативный ручной способ)
 
