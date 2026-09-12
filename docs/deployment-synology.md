@@ -3,6 +3,8 @@
 Пошаговая инструкция для NAS Synology с DSM 7.2+ и Container Manager.
 Общая инструкция развертывания (переменные окружения, secrets, TLS) —
 `docs/deployment.md`; бэкап/восстановление — `docs/backup-restore.md`.
+Основной способ деплоя — **GitLab CI** (раздел 2); разделы 3–13 описывают
+**альтернативный ручной способ** (`git pull` + `docker compose up -d --build`).
 
 ## 1. Требования
 
@@ -18,9 +20,122 @@
 > терминируйте TLS на reverse proxy и только после этого включайте
 > `APP_HSTS_ENABLED=true` (переменная поддерживается compose).
 
-## 2. Шаг 1. Получить код на NAS
+## 2. Деплой через GitLab CI (основной способ)
 
-Проект удобно держать в общей папке docker: `/volume1/docker`.
+Пайплайн `.gitlab-ci.yml` собирает образ `linux/amd64` и публикует его в
+приватный registry GitLab (`CI_REGISTRY`), а деплой-джоба по SSH обновляет
+контейнер `app` на NAS из готового образа — **сборка на NAS не выполняется**.
+
+### Схема пайплайна
+
+Используется Docker-executor раннер с тегом `docker` (см. `default.tags`
+в `.gitlab-ci.yml`); кэш Maven (`.m2/repository`) общий для джоб.
+
+| Стадия | Джоба | Что делает |
+|---|---|---|
+| `test` | `mvn -B verify` | unit-тесты (surefire) и интеграционные тесты на Testcontainers (failsafe); Docker-in-Docker как сервис |
+| `build` | `mvn -B package -DskipTests` | собирает `target/safe-accounts.jar` |
+| `docker` | `docker build --platform linux/amd64` | собирает и пушит `$CI_REGISTRY_IMAGE:$VERSION` и `$CI_REGISTRY_IMAGE:latest` |
+| `deploy` | `scp` + `ssh` | копирует compose-файлы на NAS, `docker compose pull app`, `up -d` |
+| `cleanup` | `ssh` + `docker rmi` | оставляет на NAS 3 последние версии образа и `latest`, старые удаляет |
+
+Версия образа: тег (`CI_COMMIT_TAG`) либо `1.0.<номер пайплайна>` для веток
+`master`/`main`. Полный пайплайн (с `deploy`/`cleanup`) запускается только
+для `master`/`main` и тегов; остальные ветки проходят `test` и `build`.
+
+### Настройка GitLab
+
+1. **Deploy token** (Settings → Repository → Deploy tokens): scope
+   `read_registry` — этим токеном NAS выполняет `docker login` в приватный registry.
+2. **CI/CD → Variables** (Settings → CI/CD → Variables):
+
+| Переменная | Тип в GitLab | Назначение |
+|---|---|---|
+| `NAS_SSH_HOST` | Variable, Masked | IP-адрес или DNS-имя NAS для `ssh`/`scp` |
+| `NAS_SSH_USER` | Variable, Masked | SSH-пользователь на NAS (член группы `docker`) |
+| `NAS_SSH_PRIVATE_KEY` | File (ed25519) | закрытый SSH-ключ для подключения к NAS; содержимое файла — приватный ключ |
+| `NAS_REGISTRY_USER` | Variable, Masked | имя Deploy token (scope `read_registry`) |
+| `NAS_REGISTRY_TOKEN` | Variable, Masked | токен Deploy token (scope `read_registry`) |
+
+> Мастер-ключ KEK и пароль БД **не заводятся** в GitLab: они живут только
+> в `.env` и `secrets/` на NAS (раздел 4) и в локальном `.env` разработчика.
+
+### Настройка NAS
+
+1. Включите SSH: **Панель управления → Терминал и SNMP → «Включить службу SSH»**.
+2. Дайте CI-пользователю доступ к Docker. Проще всего — добавить пользователя
+   в группу **`docker`** (Панель управления → Пользователь/Группа): тогда
+   `docker` работает без `sudo`. Альтернатива — `sudo` с ограниченным набором
+   команд (`docker login`, `docker compose pull/up`, `docker images`,
+   `docker rmi`) через `sudoers`.
+3. Сгенерируйте ключевую пару и добавьте открытый ключ на NAS
+   (`/volume1/homes/<пользователь>/.ssh/authorized_keys`):
+
+   ```bash
+   ssh-keygen -t ed25519 -f gitlab-ci-deploy -N ""
+   ssh-copy-id <пользователь>@<IP_NAS>
+   ```
+
+   Закрытый ключ `gitlab-ci-deploy` загрузите в GitLab как файл
+   `NAS_SSH_PRIVATE_KEY`.
+4. Проверьте подключение без пароля:
+
+   ```bash
+   ssh <пользователь>@<IP_NAS> 'docker version'
+   ```
+
+   Если docker требует пароль или `sudo` — пользователь не в группе `docker`.
+5. Создайте целевой каталог (один раз):
+
+   ```bash
+   ssh <пользователь>@<IP_NAS> 'mkdir -p /volume1/docker/safe-accounts'
+   ```
+
+### Первый запуск
+
+1. **Один раз, вручную** выполните «Шаг 2. Подготовить `.env`» (раздел 4) и,
+   при желании, Docker secrets (раздел 11). CI эти файлы не создает и не
+   синхронизирует (они в `.gitignore`). Compose-файлы (`docker-compose.yml`,
+   `docker-compose.synology.yml`, `docker-compose.deploy.yml`) CI копирует
+   на NAS при каждом деплое — обновлять их вручную на NAS не нужно.
+2. Запустите пайплайн на ветке `master`/`main` (или создайте тег).
+   Джоба `deploy`:
+   - скопирует compose-файлы в `/volume1/docker/safe-accounts/`;
+   - залогинится в registry Deploy token'ом
+     (`NAS_REGISTRY_USER`/`NAS_REGISTRY_TOKEN`);
+   - выполнит `SAFE_ACCOUNTS_IMAGE=$CI_REGISTRY_IMAGE:$VERSION`
+     `docker compose -f docker-compose.yml -f docker-compose.synology.yml
+     -f docker-compose.deploy.yml pull app`;
+   - поднимет контейнер `... up -d` (без `down` — контейнеры и данные
+     не теряются).
+3. Проверка — раздел 7 («Шаг 4. Проверка»).
+
+### Ручной откат
+
+Если новая версия не работает — поднимите предыдущий тег (данные БД в volume
+`pgdata` не затрагиваются; миграции Flyway идут только вперёд, при откате
+схемы восстанавливайте дамп — `docs/backup-restore.md`):
+
+```bash
+ssh <пользователь>@<IP_NAS>
+cd /volume1/docker/safe-accounts
+SAFE_ACCOUNTS_IMAGE=registry.gitlab.com/kolchenkoav/safe-accounts:<предыдущий-тег> \
+  docker compose -f docker-compose.yml -f docker-compose.synology.yml -f docker-compose.deploy.yml up -d
+```
+
+### Troubleshooting (CI)
+
+| Симптом | Причина и решение |
+|---|---|
+| `ssh: connect to host <NAS> port 22: Connection timed out` | SSH на NAS недоступен: включите службу SSH, проверьте `NAS_SSH_HOST` и доступность порта 22 из сети, где стоит раннер |
+| `denied: requested access to the resource is denied` при `pull app` | Deploy token не читает registry: проверьте scope `read_registry` у токена и значения `NAS_REGISTRY_USER`/`NAS_REGISTRY_TOKEN` |
+| Ошибка интерполяции `SAFE_ACCOUNTS_IMAGE is required` | Джоба `deploy` не получила версию (`version.env` из джобы `docker` через `needs`) либо compose-файлы на NAS не синхронизированы — перезапустите пайплайн |
+| Приложение не стартует: `VAULT master key not configured` | На NAS не заполнен `.env`: задайте ровно один источник KEK (`VAULT_MASTER_KEY_BASE64` или `VAULT_MASTER_KEY_FILE`), раздел 4 |
+
+## 3. Шаг 1. Получить код на NAS (альтернативный ручной способ)
+
+При деплое через GitLab CI код на NAS получать не нужно — CI сам копирует
+compose-файлы. Проект удобно держать в общей папке docker: `/volume1/docker`.
 
 **Вариант A — клонирование по SSH.** Подключитесь по SSH (Панель управления →
 Терминал и SNMP → «Включить службу SSH», вход пользователем из группы
@@ -37,7 +152,7 @@ cd /volume1/docker/safe-accounts
 папку `secrets/` — секреты создаются на NAS отдельно, шагом ниже
 (`.env` и `secrets/` в репозитории отсутствуют, они в `.gitignore`).
 
-## 3. Шаг 2. Подготовить `.env`
+## 4. Шаг 2. Подготовить `.env`
 
 Compose читает `.env` из корня проекта (рядом с `docker-compose.yml`) и
 подставляет значения в `${...}`. Создайте файл на NAS и заполните:
@@ -87,7 +202,7 @@ sudo chmod 600 .env
 > шифротекст, и без того же KEK данные необратимо теряются
 > (см. `docs/backup-restore.md`).
 
-## 4. Шаг 3 (основной путь). Запуск через Container Manager
+## 5. Шаг 3 (альтернативный ручной способ). Запуск через Container Manager
 
 1. Откройте **Container Manager → Проект (Project) → Создать (Create)**.
 2. Имя проекта: `safe-accounts` (рекомендуется — см. примечание ниже).
@@ -104,7 +219,7 @@ sudo chmod 600 .env
 > назвали проект иначе, скриптам нужно передавать переменную
 > `COMPOSE_PROJECT_NAME=<имя-проекта>`.
 
-## 5. Шаг 3 (альтернатива). Запуск через SSH
+## 6. Шаг 3 (альтернативный ручной способ). Запуск через SSH
 
 Тот же результат из консоли (пользователь из группы администраторов):
 
@@ -113,7 +228,7 @@ cd /volume1/docker/safe-accounts
 sudo docker compose up -d --build
 ```
 
-## 6. Шаг 4. Проверка
+## 7. Шаг 4. Проверка
 
 ```bash
 cd /volume1/docker/safe-accounts
@@ -138,7 +253,7 @@ bootstrap выполняется **только на пустой БД** (есл
 Healthcheck `app` имеет `start_period: 60s` — сразу после запуска контейнер
 может несколько десятков секунд оставаться в статусе `starting`, это штатно.
 
-## 7. Шаг 5. Автозапуск после перезагрузки NAS (важно)
+## 8. Шаг 5. Автозапуск после перезагрузки NAS (важно)
 
 В `docker-compose.yml` у сервиса `db` указано `restart: "no"` — это осознанный
 компромисс проекта: жизненным циклом БД управляет оператор и скрипты
@@ -147,18 +262,18 @@ Healthcheck `app` имеет `start_period: 60s` — сразу после за�
 **после перезагрузки NAS БД сама не поднимется** (сервис `app` поднимется
 — у него `restart: unless-stopped`, но без БД он не сможет работать).
 
-Решение — override-файл, включающий автоперезапуск только для `db`.
-Создайте в корне проекта файл `docker-compose.synology.yml`:
+Решение — override-файл `docker-compose.synology.yml`: автоперезапуск только
+для `db` плюс подвязка порта БД к localhost (наружу 5432 не публикуется).
+Файл уже в репозитории; при деплое через GitLab CI он синхронизируется на
+NAS автоматически (раздел 2). При ручном способе убедитесь, что файл есть
+в корне проекта:
 
 ```yaml
-# Override для Synology NAS: поднимать БД автоматически после перезагрузки NAS.
-# Запуск:
-#   docker compose -f docker-compose.yml -f docker-compose.synology.yml up -d --build
-# В Container Manager тот же файл добавляется на шаге проекта
-# («использовать несколько compose-файлов» / путь к основному + override).
 services:
   db:
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:5432:5432"
 ```
 
 И используйте в SSH:
@@ -178,7 +293,7 @@ Docker» (контейнеры проекта стартуют при запус
 не запускает (политика `unless-stopped` запоминает остановку) — ручной
 рестарт по-прежнему требует явной команды оператора.
 
-## 8. Шаг 6. Обновление версии
+## 9. Шаг 6. Обновление версии (альтернативный ручной способ)
 
 ```bash
 cd /volume1/docker/safe-accounts
@@ -191,7 +306,7 @@ sudo docker compose -f docker-compose.yml -f docker-compose.synology.yml up -d -
 приходят новыми файлами `V<n>__description.sql`. Если override-файл не
 используется, команда та же без `-f ...`.
 
-## 9. Шаг 7. Бэкап и восстановление
+## 10. Шаг 7. Бэкап и восстановление
 
 Скрипты запускаются по SSH из папки проекта (docker на DSM вызывается
 через `sudo`):
@@ -226,7 +341,7 @@ cd /volume1/docker/safe-accounts && ./scripts/backup.sh >> ./backups/backup.log 
 **Мастер-ключ (KEK) храните отдельно от дампов**: дамп без KEK бесполезен
 злоумышленнику, но и вы без KEK данные не восстановите.
 
-## 10. Шаг 8 (опционально). Docker secrets вместо пароля в `.env`
+## 11. Шаг 8 (опционально). Docker secrets вместо пароля в `.env`
 
 Если не хотите держать пароль БД в `.env`, используйте режим secrets —
 compose-файл `docker-compose.secrets.yml` монтирует файлы в `/run/secrets`
@@ -250,27 +365,28 @@ sudo docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --
 случае оставляют ее значение (либо применяют secrets-режим только к `app`,
 как описано в `docs/deployment.md` §4, режим 2).
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 | Симптом | Причина и решение |
 |---|---|
-| Ошибка интерполяции вида `POSTGRES_USER is required` при старте | Нет `.env` рядом с `docker-compose.yml` или переменные не заполнены. Заполните `.env` (§3) и пересоздайте проект |
+| Ошибка интерполяции вида `POSTGRES_USER is required` при старте | Нет `.env` рядом с `docker-compose.yml` или переменные не заполнены. Заполните `.env` (§4) и пересоздайте проект |
 | Порт 8080 на NAS уже занят | Задайте в `.env` другой `APP_PORT` (например `8081`) и пересоздайте проект (`docker compose up -d`) |
 | Старт падает: `Admin bootstrap misconfigured: set both APP_ADMIN_USERNAME and APP_ADMIN_PASSWORD` | Задана только одна из переменных `APP_ADMIN_*`. Задайте обе или уберите обе |
 | Старт падает: `Admin bootstrap failed: invalid configuration` | Пароль администратора не проходит политику — нужен **≥ 12 символов** (до 128) |
-| Приложение не стартует, в журнале требование мастер-ключа | Не задан ни `VAULT_MASTER_KEY_BASE64`, ни `VAULT_MASTER_KEY_FILE`. Задайте ровно один источник KEK (§3) |
+| Приложение не стартует, в журнале требование мастер-ключа | Не задан ни `VAULT_MASTER_KEY_BASE64`, ни `VAULT_MASTER_KEY_FILE`. Задайте ровно один источник KEK (§4) |
 | Контейнер `app` в статусе `unhealthy` / `starting` дольше минуты | Смотрите журнал: Container Manager → Журнал контейнера или `sudo docker compose logs -f app`. Healthcheck — `wget /actuator/health` c `start_period 60s`; ошибка внутри — причина в журнале Spring (например, недоступна БД) |
-| Контейнер `db` не запустился после перезагрузки NAS | Это `restart: "no"` из основного compose-файла. Подключите override `docker-compose.synology.yml` с `restart: unless-stopped` (§7) |
+| Контейнер `db` не запустился после перезагрузки NAS | Это `restart: "no"` из основного compose-файла. Подключите override `docker-compose.synology.yml` с `restart: unless-stopped` (§8) |
 | Сборка на ARM-NAS идет очень долго | Нормально: внутри Dockerfile собирается Maven-проект. Дождитесь завершения, последующие пересборки быстрее за счет кэша слоев |
-| Скрипты `backup.sh`/`restore.sh` пишут «Контейнер БД не найден» | Имя compose-проекта отличается от `safe-accounts`. Запускайте с `COMPOSE_PROJECT_NAME=<имя-проекта>` или назовите проект `safe-accounts` (§4) |
+| Скрипты `backup.sh`/`restore.sh` пишут «Контейнер БД не найден» | Имя compose-проекта отличается от `safe-accounts`. Запускайте с `COMPOSE_PROJECT_NAME=<имя-проекта>` или назовите проект `safe-accounts` (§5) |
 
-## 12. Где что лежит на NAS
+## 13. Где что лежит на NAS
 
 | Что | Где |
 |---|---|
 | Код проекта, compose-файлы, скрипты | `/volume1/docker/safe-accounts` |
 | `.env` (секреты окружения) | `/volume1/docker/safe-accounts/.env` (права `600`) |
-| Override автозапуска БД | `/volume1/docker/safe-accounts/docker-compose.synology.yml` |
+| Override автозапуска БД и порта БД (localhost) | `/volume1/docker/safe-accounts/docker-compose.synology.yml` — в репозитории, синхронизируется CI |
+| Override CI-деплоя (образ из registry) | `/volume1/docker/safe-accounts/docker-compose.deploy.yml` — в репозитории, синхронизируется CI |
 | Файлы Docker secrets (опц.) | `/volume1/docker/safe-accounts/secrets/` (`db_password.txt`, `master_key.txt`) |
 | Дампы бэкапов | `/volume1/docker/safe-accounts/backups/` (создает `backup.sh`, права `600`) |
 | Данные БД (volume `pgdata`) | `/volume1/@docker/volumes/safe-accounts_pgdata/_data` — служебная папка Docker, по SSH; вручную не изменять, бэкап только через `backup.sh` |
