@@ -47,8 +47,20 @@
 
 ### Настройка GitLab
 
-1. **Deploy token** (Settings → Repository → Deploy tokens): scope
-   `read_registry` — этим токеном NAS выполняет `docker login` в приватный registry.
+1. **Deploy token** — доступ к приватному registry только на чтение. Проект
+   `kolchenkoav/safe-accounts` на gitlab.com → **Settings → Repository →
+   Deploy tokens**:
+
+   1. Заполнить **Name** (например `nas-registry-pull`), **Expiration date**
+      (опционально); в **Scopes** отметить **только `read_registry`** →
+      **Create deploy token**.
+   2. Сразу сохранить оба показанных значения (токен отображается один раз):
+      - **Username** — вида `gitlab+deploy-token-1234`;
+      - **Token** — длинная случайная строка.
+   3. Отзыв токена — там же (**Deploy tokens**); при компрометации — отозвать
+      и пересоздать.
+
+   Именно этим токеном NAS выполняет `docker login` в приватный registry.
 2. **CI/CD → Variables** (Settings → CI/CD → Variables):
 
 | Переменная | Тип в GitLab | Назначение |
@@ -56,8 +68,21 @@
 | `NAS_SSH_HOST` | Variable, Masked | IP-адрес или DNS-имя NAS для `ssh`/`scp` |
 | `NAS_SSH_USER` | Variable, Masked | SSH-пользователь на NAS (член группы `docker`) |
 | `NAS_SSH_PRIVATE_KEY` | File (ed25519) | закрытый SSH-ключ для подключения к NAS; содержимое файла — приватный ключ |
-| `NAS_REGISTRY_USER` | Variable, Masked | имя Deploy token (scope `read_registry`) |
-| `NAS_REGISTRY_TOKEN` | Variable, Masked | токен Deploy token (scope `read_registry`) |
+| `NAS_REGISTRY_USER` | Variable, Masked | имя Deploy token (Username вида `gitlab+deploy-token-*`) |
+| `NAS_REGISTRY_TOKEN` | Variable, Masked | токен Deploy token (Token), значения не печатаем |
+
+   Параметры пары `NAS_REGISTRY_USER` / `NAS_REGISTRY_TOKEN` (для обеих):
+   Type = Variable (по умолчанию), флаг **Masked = вкл.**, флаг
+   **Protected = выкл.** — ветка `master` не защищена, protected-переменные
+   до неё не долетят; Environment scope = All (default). Значения:
+   `NAS_REGISTRY_USER` ← **Username** из Deploy token (например
+   `gitlab+deploy-token-1234`), `NAS_REGISTRY_TOKEN` ← **Token** из Deploy token.
+
+   Как используется: в джобе `deploy` на NAS выполняется
+   `echo "$NAS_REGISTRY_TOKEN" | docker login -u "$NAS_REGISTRY_USER" --password-stdin "$CI_REGISTRY"`;
+   `$CI_REGISTRY` (`registry.gitlab.com`) подставляется автоматически; токен
+   передаётся через stdin и не попадает в логи. В `NAS_REGISTRY_USER` — имя
+   deploy-token'а, а не личный логин.
 
 > Мастер-ключ KEK и пароль БД **не заводятся** в GitLab: они живут только
 > в `.env` и `secrets/` на NAS (раздел 4) и в локальном `.env` разработчика.
