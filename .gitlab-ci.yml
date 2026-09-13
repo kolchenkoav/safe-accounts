@@ -105,6 +105,16 @@ deploy:
     - docker
   environment: synology
   script:
+    # Fail-fast: проверяем обязательные переменные CI, чтобы вместо невнятных
+    # ошибок ssh/scp (cp: can't stat, Could not resolve hostname) был явный ERROR.
+    # Значения переменных не печатаем.
+    - |
+      if [ -z "$NAS_SSH_HOST" ]; then echo "ERROR: NAS_SSH_HOST is not set (add GitLab CI/CD variable)" >&2; exit 1; fi
+      if [ -z "$NAS_SSH_USER" ]; then echo "ERROR: NAS_SSH_USER is not set (add GitLab CI/CD variable)" >&2; exit 1; fi
+      if [ -z "$NAS_SSH_PRIVATE_KEY" ]; then echo "ERROR: NAS_SSH_PRIVATE_KEY is not set (set as File variable)" >&2; exit 1; fi
+      if [ ! -f "$NAS_SSH_PRIVATE_KEY" ]; then echo "ERROR: NAS_SSH_PRIVATE_KEY file not found (set as File variable)" >&2; exit 1; fi
+      if [ -z "$NAS_REGISTRY_USER" ]; then echo "ERROR: NAS_REGISTRY_USER is not set (add GitLab CI/CD variable)" >&2; exit 1; fi
+      if [ -z "$NAS_REGISTRY_TOKEN" ]; then echo "ERROR: NAS_REGISTRY_TOKEN is not set (add GitLab CI/CD variable)" >&2; exit 1; fi
     # SSH-клиент раннера и приватный ключ для подключения к NAS.
     - apk add --no-cache openssh-client
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
@@ -141,6 +151,12 @@ cleanup:
     - deploy
   when: on_success
   script:
+    # Fail-fast: проверяем SSH-переменные для подключения к NAS (значения не печатаем).
+    - |
+      if [ -z "$NAS_SSH_HOST" ]; then echo "ERROR: NAS_SSH_HOST is not set (add GitLab CI/CD variable)" >&2; exit 1; fi
+      if [ -z "$NAS_SSH_USER" ]; then echo "ERROR: NAS_SSH_USER is not set (add GitLab CI/CD variable)" >&2; exit 1; fi
+      if [ -z "$NAS_SSH_PRIVATE_KEY" ]; then echo "ERROR: NAS_SSH_PRIVATE_KEY is not set (set as File variable)" >&2; exit 1; fi
+      if [ ! -f "$NAS_SSH_PRIVATE_KEY" ]; then echo "ERROR: NAS_SSH_PRIVATE_KEY file not found (set as File variable)" >&2; exit 1; fi
     - apk add --no-cache openssh-client
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
     - cp "$NAS_SSH_PRIVATE_KEY" ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
