@@ -30,10 +30,12 @@
 
 Используется Docker-executor раннер с тегом `docker` (см. `default.tags`
 в `.gitlab-ci.yml`); кэш Maven (`.m2/repository`) общий для джоб.
+Джобы `test` и `docker` работают **без dind** — через host Docker socket,
+который раннер пробрасывает в контейнер джобы (см. «Настройка NAS», п. 7).
 
 | Стадия | Джоба | Что делает |
 |---|---|---|
-| `test` | `mvn -B verify` | unit-тесты (surefire) и интеграционные тесты на Testcontainers (failsafe); Docker-in-Docker как сервис |
+| `test` | `mvn -B verify` | unit-тесты (surefire) и интеграционные тесты на Testcontainers (failsafe); Docker через host socket раннера |
 | `build` | `mvn -B package -DskipTests` | собирает `target/safe-accounts.jar` |
 | `docker` | `docker build --platform linux/amd64` | собирает и пушит `$CI_REGISTRY_IMAGE:$VERSION` и `$CI_REGISTRY_IMAGE:latest` |
 | `deploy` | `scp` + `ssh` | копирует compose-файлы на NAS, `docker compose pull app`, `up -d` |
@@ -108,6 +110,27 @@
    > окружении SSH-пользователя на момент выполнения. Практически их
    > задают один раз на раннере в CI/CD Variables (masked), а ssh-команда
    > передаёт их через окружение команды; в логи они не попадают.
+7. Настройте host Docker socket для раннера (CI работает **без dind** —
+   Docker executor раннера пробрасывает сокет демона хоста в контейнер
+   джобы). В config.toml раннера (путь зависит от способа установки,
+   например `/volume1/@appstore/gitlab-runner/.../config.toml`) в секции
+   `[runners.docker]` добавьте в `volumes` строки
+   `/var/run/docker.sock:/var/run/docker.sock` и `/cache` (если ещё нет),
+   затем перезапустите раннер:
+
+   ```bash
+   sudo gitlab-runner restart    # или перезапуск службы раннера
+   ```
+
+   Если в конфиге остался `privileged = true` (от прежней попытки с dind) —
+   его можно оставить или выключить: на доступ по host-сокету это не влияет.
+8. Почистите осиротевшие контейнеры от старых попыток dind:
+
+   ```bash
+   docker ps -a --filter name=dind --format '{{.ID}} {{.Names}}'
+   docker rm -f <id>      # для каждого найденного
+   # или осторожно: docker container prune -f
+   ```
 
 ### Первый запуск
 
@@ -149,7 +172,8 @@ SAFE_ACCOUNTS_IMAGE=registry.gitlab.com/kolchenkoav/safe-accounts:<предыд�
 | `denied: requested access to the resource is denied` при `pull app` | Deploy token не читает registry: проверьте scope `read_registry` у токена и значения `NAS_REGISTRY_USER`/`NAS_REGISTRY_TOKEN` |
 | Ошибка интерполяции `SAFE_ACCOUNTS_IMAGE is required` | Джоба `deploy` не получила версию (`version.env` из джобы `docker` через `needs`) либо compose-файлы на NAS не синхронизированы — перезапустите пайплайн |
 | Приложение не стартует: `VAULT master key not configured` | На NAS не заполнен `.env`: задайте ровно один источник KEK (`VAULT_MASTER_KEY_BASE64` или `VAULT_MASTER_KEY_FILE`), раздел 4 |
-| `ERROR: Cannot connect to the Docker daemon at tcp://docker:2375` при `docker build` | dind не успел подняться к моменту старта script (гонка старта). В джобе `docker` стоит wait-loop в `before_script` (до 30×2 с); если ошибка повторилась на перегруженном раннере — перезапустите джобу/пайплайн |
+| «Service docker:24.0.7-dind is already created. Ignoring.» / «can't create unix socket /var/run/docker.sock: device or resource busy» | Остатки прежней конфигурации с dind на Synology-раннере. CI переведён на host Docker socket: удалите осиротевшие контейнеры dind («Настройка NAS», п. 8) и добавьте volume с сокетом в config.toml раннера (п. 7) |
+| `ERROR: Cannot connect to the Docker daemon at unix:/var/run/docker.sock` | Внутри джобы нет сокета демона хоста: проверьте, что volume `/var/run/docker.sock:/var/run/docker.sock` добавлен в `[runners.docker].volumes` в config.toml раннера, и что на самом NAS работает `docker info` |
 
 ## 3. Шаг 1. Получить код на NAS (альтернативный ручной способ)
 
