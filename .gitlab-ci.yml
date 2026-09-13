@@ -110,11 +110,12 @@ deploy:
       if [ -z "$NAS_REGISTRY_TOKEN" ]; then echo "ERROR: NAS_REGISTRY_TOKEN is not set (add GitLab CI/CD variable)" >&2; exit 1; fi
 
     - apk add --no-cache openssh-client
-
     - mkdir -p ~/.ssh
     - chmod 700 ~/.ssh
 
-    - cp "$NAS_SSH_PRIVATE_KEY" ~/.ssh/ci_cd_key
+    # Копируем ключ, удаляем Windows-переносы (\r) и гарантируем пустую строку в конце
+    - tr -d '\r' < "$NAS_SSH_PRIVATE_KEY" > ~/.ssh/ci_cd_key
+    - '[ -n "$(tail -c1 ~/.ssh/ci_cd_key)" ] && echo "" >> ~/.ssh/ci_cd_key || true'
     - chmod 600 ~/.ssh/ci_cd_key
 
     - ssh-keyscan -H "$NAS_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
@@ -161,11 +162,12 @@ cleanup:
       if [ ! -f "$NAS_SSH_PRIVATE_KEY" ]; then echo "ERROR: NAS_SSH_PRIVATE_KEY file not found (set as File variable)" >&2; exit 1; fi
 
     - apk add --no-cache openssh-client
-
     - mkdir -p ~/.ssh
     - chmod 700 ~/.ssh
 
-    - cp "$NAS_SSH_PRIVATE_KEY" ~/.ssh/ci_cd_key
+    # Копируем ключ, удаляем Windows-переносы (\r) и гарантируем пустую строку в конце
+    - tr -d '\r' < "$NAS_SSH_PRIVATE_KEY" > ~/.ssh/ci_cd_key
+    - '[ -n "$(tail -c1 ~/.ssh/ci_cd_key)" ] && echo "" >> ~/.ssh/ci_cd_key || true'
     - chmod 600 ~/.ssh/ci_cd_key
 
     - ssh-keyscan -H "$NAS_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
