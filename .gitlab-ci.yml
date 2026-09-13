@@ -127,12 +127,12 @@ deploy:
     # known_hosts можно зафиксировать вручную для детерминированной проверки.
     - ssh-keyscan -H "$NAS_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
     # Синхронизируем compose-файлы (перезаписываются при каждом деплое).
-    - scp -i ~/.ssh/ci_cd_key -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes docker-compose.yml docker-compose.synology.yml docker-compose.deploy.yml "$NAS_SSH_USER@$NAS_SSH_HOST:/volume1/docker/safe-accounts/"
+    - scp -i ~/.ssh/authorized_keyso StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes docker-compose.yml docker-compose.synology.yml docker-compose.deploy.yml "$NAS_SSH_USER@$NAS_SSH_HOST:/volume1/docker/safe-accounts/"
     # Логинимся Deploy token'ом и обновляем app: pull + up -d, без down.
     # После up -d выходим из registry: не оставляем deploy token в
     # ~/.docker/config.json на NAS (|| true — отказ logout не роняет джобу).
     - |
-      ssh -i ~/.ssh/ci_cd_key -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$NAS_SSH_USER@$NAS_SSH_HOST" \
+      ssh -i ~/.ssh/authorized_keys -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$NAS_SSH_USER@$NAS_SSH_HOST" \
         "cd /volume1/docker/safe-accounts && set -e && \
          echo \"\$NAS_REGISTRY_TOKEN\" | docker login -u \"\$NAS_REGISTRY_USER\" --password-stdin \"$CI_REGISTRY\" && \
          SAFE_ACCOUNTS_IMAGE=\"$CI_REGISTRY_IMAGE:$VERSION\" docker compose -f docker-compose.yml -f docker-compose.synology.yml -f docker-compose.deploy.yml pull app && \
@@ -171,7 +171,7 @@ cleanup:
     # сортировка по версии (числовой сегмент тега) по убыванию -> удаляем все,
     # кроме 3 самых свежих (awk 'NR > 3').
     - |
-      ssh -i ~/.ssh/ci_cd_key -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$NAS_SSH_USER@$NAS_SSH_HOST" \
+      ssh -i ~/.ssh/authorized_keys -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$NAS_SSH_USER@$NAS_SSH_HOST" \
         "set -e && docker images --format '{{.Repository}}:{{.Tag}}' | \
          awk -F: -v p=\"$CI_REGISTRY_IMAGE\" '\$1 == p && \$2 !~ /^latest$/ { split(\$2, t, /\\./); print t[length(t)] + 0, \$0 }' | \
          sort -nr -k1,1 | awk 'NR > 3 { s = \$2; for (i = 3; i <= NF; i++) s = s OFS \$i; print s }' | \
