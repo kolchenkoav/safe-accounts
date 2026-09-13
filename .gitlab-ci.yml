@@ -94,12 +94,6 @@ docker:
     - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "main"
     - if: $CI_COMMIT_TAG
 
-# ---------------------------------------------------------------------------
-# Стадия deploy — синхронизация compose-файлов и обновление контейнера app
-# на NAS. Секреты (.env, secrets/) на NAS создаются вручную, CI их не трогает.
-# Локальные переменные ($CI_REGISTRY, $CI_REGISTRY_IMAGE, $VERSION) раскрываются
-# на раннере ДО ssh; NAS_REGISTRY_* раскрываются внутри команды на NAS.
-# ---------------------------------------------------------------------------
 deploy:
   stage: deploy
   image: docker:24.0.7
@@ -107,9 +101,6 @@ deploy:
     - docker
   environment: synology
   script:
-    # Fail-fast: проверяем обязательные переменные CI, чтобы вместо невнятных
-    # ошибок ssh/scp (cp: can't stat, Could not resolve hostname) был явный ERROR.
-    # Значения переменных не печатаем.
     - |
       if [ -z "$NAS_SSH_HOST" ]; then echo "ERROR: NAS_SSH_HOST is not set (add GitLab CI/CD variable)" >&2; exit 1; fi
       if [ -z "$NAS_SSH_USER" ]; then echo "ERROR: NAS_SSH_USER is not set (add GitLab CI/CD variable)" >&2; exit 1; fi
@@ -117,22 +108,30 @@ deploy:
       if [ ! -f "$NAS_SSH_PRIVATE_KEY" ]; then echo "ERROR: NAS_SSH_PRIVATE_KEY file not found (set as File variable)" >&2; exit 1; fi
       if [ -z "$NAS_REGISTRY_USER" ]; then echo "ERROR: NAS_REGISTRY_USER is not set (add GitLab CI/CD variable)" >&2; exit 1; fi
       if [ -z "$NAS_REGISTRY_TOKEN" ]; then echo "ERROR: NAS_REGISTRY_TOKEN is not set (add GitLab CI/CD variable)" >&2; exit 1; fi
-    # SSH-клиент раннера и приватный ключ для подключения к NAS.
 
-#    - apk add --no-cache openssh-client
-#    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
-#    - cp "$NAS_SSH_PRIVATE_KEY" ~/.ssh/id_deploy && chmod 600 ~/.ssh/ci_cd_key
+    - apk add --no-cache openssh-client
 
-    # Первый контакт принимаем (accept-new); при желании после первого деплоя
-    # known_hosts можно зафиксировать вручную для детерминированной проверки.
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+
+    - cp "$NAS_SSH_PRIVATE_KEY" ~/.ssh/ci_cd_key
+    - chmod 600 ~/.ssh/ci_cd_key
+
     - ssh-keyscan -H "$NAS_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
-    # Синхронизируем compose-файлы (перезаписываются при каждом деплое).
-    - scp -i ~/.ssh/authorized_keyso StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes docker-compose.yml docker-compose.synology.yml docker-compose.deploy.yml "$NAS_SSH_USER@$NAS_SSH_HOST:/volume1/docker/safe-accounts/"
-    # Логинимся Deploy token'ом и обновляем app: pull + up -d, без down.
-    # После up -d выходим из registry: не оставляем deploy token в
-    # ~/.docker/config.json на NAS (|| true — отказ logout не роняет джобу).
+
     - |
-      ssh -i ~/.ssh/authorized_keys -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$NAS_SSH_USER@$NAS_SSH_HOST" \
+      ssh -i ~/.ssh/ci_cd_key -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$NAS_SSH_USER@$NAS_SSH_HOST" \
+        "mkdir -p /volume1/docker/safe-accounts"
+
+    - |
+      scp -i ~/.ssh/ci_cd_key -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes \
+        docker-compose.yml \
+        docker-compose.synology.yml \
+        docker-compose.deploy.yml \
+        "$NAS_SSH_USER@$NAS_SSH_HOST:/volume1/docker/safe-accounts/"
+
+    - |
+      ssh -i ~/.ssh/ci_cd_key -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$NAS_SSH_USER@$NAS_SSH_HOST" \
         "cd /volume1/docker/safe-accounts && set -e && \
          echo \"\$NAS_REGISTRY_TOKEN\" | docker login -u \"\$NAS_REGISTRY_USER\" --password-stdin \"$CI_REGISTRY\" && \
          SAFE_ACCOUNTS_IMAGE=\"$CI_REGISTRY_IMAGE:$VERSION\" docker compose -f docker-compose.yml -f docker-compose.synology.yml -f docker-compose.deploy.yml pull app && \
@@ -155,23 +154,24 @@ cleanup:
     - deploy
   when: on_success
   script:
-    # Fail-fast: проверяем SSH-переменные для подключения к NAS (значения не печатаем).
     - |
       if [ -z "$NAS_SSH_HOST" ]; then echo "ERROR: NAS_SSH_HOST is not set (add GitLab CI/CD variable)" >&2; exit 1; fi
       if [ -z "$NAS_SSH_USER" ]; then echo "ERROR: NAS_SSH_USER is not set (add GitLab CI/CD variable)" >&2; exit 1; fi
       if [ -z "$NAS_SSH_PRIVATE_KEY" ]; then echo "ERROR: NAS_SSH_PRIVATE_KEY is not set (set as File variable)" >&2; exit 1; fi
       if [ ! -f "$NAS_SSH_PRIVATE_KEY" ]; then echo "ERROR: NAS_SSH_PRIVATE_KEY file not found (set as File variable)" >&2; exit 1; fi
-#    - apk add --no-cache openssh-client
-#    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
-#    - cp "$NAS_SSH_PRIVATE_KEY" ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
-    # Первый контакт принимаем (accept-new); при желании после первого деплоя
-    # known_hosts можно зафиксировать вручную для детерминированной проверки.
+
+    - apk add --no-cache openssh-client
+
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+
+    - cp "$NAS_SSH_PRIVATE_KEY" ~/.ssh/ci_cd_key
+    - chmod 600 ~/.ssh/ci_cd_key
+
     - ssh-keyscan -H "$NAS_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
-    # Список образов -> фильтр по нашему registry и исключение latest ->
-    # сортировка по версии (числовой сегмент тега) по убыванию -> удаляем все,
-    # кроме 3 самых свежих (awk 'NR > 3').
+
     - |
-      ssh -i ~/.ssh/authorized_keys -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$NAS_SSH_USER@$NAS_SSH_HOST" \
+      ssh -i ~/.ssh/ci_cd_key -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$NAS_SSH_USER@$NAS_SSH_HOST" \
         "set -e && docker images --format '{{.Repository}}:{{.Tag}}' | \
          awk -F: -v p=\"$CI_REGISTRY_IMAGE\" '\$1 == p && \$2 !~ /^latest$/ { split(\$2, t, /\\./); print t[length(t)] + 0, \$0 }' | \
          sort -nr -k1,1 | awk 'NR > 3 { s = \$2; for (i = 3; i <= NF; i++) s = s OFS \$i; print s }' | \
