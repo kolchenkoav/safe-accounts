@@ -13,7 +13,7 @@
 | DSM | 7.2+ с пакетом **Container Manager** (вкладка «Проект»). На старых DSM — пакет Docker + SSH (нужен Compose v2) |
 | Архитектура NAS | x86_64 или arm64 — обе поддерживаются образами `postgres:16-alpine` и `eclipse-temurin:21-*-alpine` (multi-arch). На ARM сборка образа (Maven внутри Dockerfile) идет заметно **медленнее** — это нормально |
 | Свободное место | ≥ 2 ГиБ на томе docker (образы + кэш Maven при сборке) плюс место под данные БД и дампы бэкапов |
-| Сеть | Порт `8080` приложения **не выставлять в интернет** без reverse proxy с TLS (см. `docs/deployment.md` §5). Порт БД `5432` наружу не публиковать |
+| Сеть | Порт `8080` приложения **не выставлять в интернет** без reverse proxy с TLS (см. `docs/deployment.md` §5). Порт БД `5432` наружу не публиковать — в `docker-compose.synology.yml` он не публикуется вовсе (конфликт с внутренним PostgreSQL DSM) |
 | Утилиты (SSH-вариант) | `openssl` для генерации мастер-ключа, `git` (только для варианта клонирования) |
 
 > Приложение работает по HTTP. Перед доступом из интернета обязательно
@@ -331,7 +331,10 @@ Healthcheck `app` имеет `start_period: 60s` — сразу после за�
 — у него `restart: unless-stopped`, но без БД он не сможет работать).
 
 Решение — override-файл `docker-compose.synology.yml`: автоперезапуск только
-для `db` плюс подвязка порта БД к localhost (наружу 5432 не публикуется).
+для `db` плюс полное отключение публикации порта БД на хосте. Порт `5432`
+на NAS занят внутренним PostgreSQL DSM, а Compose конкатенирует `ports` из
+всех файлов — поэтому базовый `5432:5432` гасится синтаксисом `!override []`
+(Compose 2.24+) и БД наружу не публикуется вовсе (это и безопаснее).
 Файл уже в репозитории; при деплое через GitLab CI он синхронизируется на
 NAS автоматически (раздел 2). При ручном способе убедитесь, что файл есть
 в корне проекта:
@@ -340,9 +343,17 @@ NAS автоматически (раздел 2). При ручном спосо�
 services:
   db:
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:5432:5432"
+    ports: !override []
 ```
+
+Ручной доступ к БД на NAS — без порта, через `docker exec`:
+
+```bash
+docker exec -it safe-accounts-db-1 psql -U <user> <db>
+```
+
+Бэкап и восстановление (`backup.sh` / `restore.sh`) также работают через
+`docker exec` и опубликованного порта не требуют.
 
 И используйте в SSH:
 
@@ -453,7 +464,7 @@ sudo docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --
 |---|---|
 | Код проекта, compose-файлы, скрипты | `/volume1/docker/safe-accounts` |
 | `.env` (секреты окружения) | `/volume1/docker/safe-accounts/.env` (права `600`) |
-| Override автозапуска БД и порта БД (localhost) | `/volume1/docker/safe-accounts/docker-compose.synology.yml` — в репозитории, синхронизируется CI |
+| Override автозапуска БД и отключения публикации порта БД | `/volume1/docker/safe-accounts/docker-compose.synology.yml` — в репозитории, синхронизируется CI |
 | Override CI-деплоя (образ из registry) | `/volume1/docker/safe-accounts/docker-compose.deploy.yml` — в репозитории, синхронизируется CI |
 | Файлы Docker secrets (опц.) | `/volume1/docker/safe-accounts/secrets/` (`db_password.txt`, `master_key.txt`) |
 | Дампы бэкапов | `/volume1/docker/safe-accounts/backups/` (создает `backup.sh`, права `600`) |

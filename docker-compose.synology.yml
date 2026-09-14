@@ -1,6 +1,8 @@
 # Override для Synology NAS: автозапуск БД после ребута и не публикуем БД наружу.
+# ports: !override [] — Compose 2.24+: погасить и базовый 5432:5432 (compose конкатенирует ports,
+# поэтому простым переопределением порта конфликт с внутренним PostgreSQL DSM на 127.0.0.1:5432 не убрать).
+# Ручной доступ к БД на NAS: docker exec -it safe-accounts-db-1 psql -U <user> <db>
 services:
   db:
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:5432:5432"
+    ports: !override []
