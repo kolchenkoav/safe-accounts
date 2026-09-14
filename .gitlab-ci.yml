@@ -131,7 +131,9 @@ deploy:
         "export PATH=/var/packages/ContainerManager/target/usr/bin:/var/packages/ContainerManager/target/usr/lib/docker/cli-plugins:/var/packages/ContainerManager/target/usr/libexec/docker/cli-plugins:/var/packages/Docker/target/usr/bin:/usr/local/bin:\$PATH; \
          cd /volume1/docker/safe-accounts && set -e && \
          docker info >/dev/null && \
+         docker compose version && \
          echo \"$NAS_REGISTRY_TOKEN\" | docker login -u \"$NAS_REGISTRY_USER\" --password-stdin \"$CI_REGISTRY\" && \
+         docker compose -f docker-compose.yml -f docker-compose.synology.yml -f docker-compose.deploy.yml down --remove-orphans --timeout 30 && \
          SAFE_ACCOUNTS_IMAGE=\"$CI_REGISTRY_IMAGE:$VERSION\" docker compose -f docker-compose.yml -f docker-compose.synology.yml -f docker-compose.deploy.yml pull app && \
          SAFE_ACCOUNTS_IMAGE=\"$CI_REGISTRY_IMAGE:$VERSION\" docker compose -f docker-compose.yml -f docker-compose.synology.yml -f docker-compose.deploy.yml up -d"
     - |
