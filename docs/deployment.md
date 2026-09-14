@@ -24,7 +24,7 @@
 
 | Переменная | Обязательна | Описание |
 |---|---|---|
-| `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_DB` | нет | хост/порт/имя БД (по умолчанию `localhost`/`5432`/`safe_accounts`) |
+| `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_DB` | нет | хост/порт/имя БД (по умолчанию `localhost`/`5432`/`safe_accounts`) (порт на хост публикуется только через docker-compose.dev.yml) |
 | `POSTGRES_USER` | да | пользователь БД |
 | `POSTGRES_PASSWORD` | да* | пароль БД (*или `POSTGRES_PASSWORD_FILE`) |
 | `POSTGRES_PASSWORD_FILE` | да* | файл с паролем БД (Docker secrets; entrypoint экспортирует `SPRING_DATASOURCE_PASSWORD`) |
@@ -76,7 +76,8 @@ secrets/
 
 ```bash
 cp .env.example .env    # заполнить POSTGRES_USER/PASSWORD, VAULT_MASTER_KEY_BASE64
-docker compose up -d --build
+# порт БД 5432 публикуется на хост только в dev-оверрайде (docker-compose.dev.yml)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 curl -fsS http://localhost:8080/actuator/health
 ```
 
@@ -147,7 +148,7 @@ server {
 - Rate limiting работает по IP клиента: при проксировании обеспечьте
   корректный `X-Forwarded-For` (доверенный proxy), иначе лимитер будет
   считать IP proxy общим для всех клиентов.
-- Не выставляйте `db` (5432) наружу; ограничьте внутреннюю сеть compose.
+- Порт `db` (5432) в базовом docker-compose.yml не публикуется вовсе; для локального доступа из инструментов используйте docker-compose.dev.yml (только для dev-окружения).
 - Swagger/OpenAPI в проде закрыт — не включайте `APP_API_DOCS_ENABLED` /
   `APP_DEV_PROFILE`.
 

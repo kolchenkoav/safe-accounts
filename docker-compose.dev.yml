@@ -1,0 +1,11 @@
+# Оверрайд для локальной разработки: публикация порта БД на хост
+# (подключение psql/IDE с хоста). В базовом docker-compose.yml порт БД
+# не публикуется вовсе — на хостах деплоя (например, Synology NAS) порт 5432
+# может быть занят другим экземпляром PostgreSQL.
+#
+# Использование:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+services:
+  db:
+    ports:
+      - "5432:5432"

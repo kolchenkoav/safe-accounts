@@ -80,7 +80,8 @@
 
 ```bash
 cp .env.example .env    # заполните POSTGRES_USER/PASSWORD и VAULT_MASTER_KEY_BASE64
-docker compose up -d --build
+# порт БД 5432 публикуется на хост только в dev-оверрайде (docker-compose.dev.yml)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 curl http://localhost:8080/actuator/health
 ```
 
@@ -131,7 +132,7 @@ docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --build
 | Переменная | Описание |
 |---|---|
 | `POSTGRES_HOST` | Хост PostgreSQL (по умолчанию `localhost`) |
-| `POSTGRES_PORT` | Порт PostgreSQL (по умолчанию `5432`) |
+| `POSTGRES_PORT` | Порт PostgreSQL (по умолчанию `5432`); публикация на хост — только в dev-режиме (docker-compose.dev.yml) |
 | `POSTGRES_DB` | Имя БД (по умолчанию `safe_accounts`) |
 | `POSTGRES_USER` | Пользователь БД (обязателен) |
 | `POSTGRES_PASSWORD` | Пароль БД (обязателен) |
@@ -260,7 +261,8 @@ docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --build
 
 ```bash
 cp .env.example .env   # заполните POSTGRES_USER/PASSWORD и VAULT_MASTER_KEY_BASE64
-docker compose up -d --build
+# порт БД 5432 публикуется на хост только в dev-оверрайде (docker-compose.dev.yml)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 curl http://localhost:8080/actuator/health   # {"status":"UP"}
 ```
 
