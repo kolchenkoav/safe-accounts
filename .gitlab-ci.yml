@@ -121,15 +121,10 @@ deploy:
     - ssh-keyscan -H "$NAS_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
 
     - |
-      ssh -i ~/.ssh/ci_cd_key -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$NAS_SSH_USER@$NAS_SSH_HOST" \
-        "mkdir -p /volume1/docker/safe-accounts"
-
-    - |
-      scp -i ~/.ssh/ci_cd_key -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes \
-        docker-compose.yml \
-        docker-compose.synology.yml \
-        docker-compose.deploy.yml \
-        "$NAS_SSH_USER@$NAS_SSH_HOST:/volume1/docker/safe-accounts/"
+      tar -cf - docker-compose.yml docker-compose.synology.yml docker-compose.deploy.yml | \
+      ssh -i ~/.ssh/ci_cd_key -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes \
+        "$NAS_SSH_USER@$NAS_SSH_HOST" \
+        "mkdir -p /volume1/docker/safe-accounts && ls -ld /volume1/docker/safe-accounts && tar -xf - -C /volume1/docker/safe-accounts/"
 
     - |
       ssh -i ~/.ssh/ci_cd_key -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$NAS_SSH_USER@$NAS_SSH_HOST" \
