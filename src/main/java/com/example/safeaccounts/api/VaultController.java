@@ -53,7 +53,8 @@ public class VaultController {
                 items.getTotalPages(),
                 items.getContent().stream()
                         .map(i -> new VaultEntryListItemResponse(
-                                i.id(), i.site(), i.login(), i.createdAt(), i.updatedAt(),
+                                i.id(), i.name(), i.site(), i.login(),
+                                i.createdAt(), i.updatedAt(),
                                 i.version() == null ? 0L : i.version()))
                         .toList());
     }
@@ -65,10 +66,12 @@ public class VaultController {
             @Valid @RequestBody VaultEntryCreateRequest request) {
         VaultService.CreatedEntry created = vaultService.create(
                 currentUser(principal),
+                request.name(),
                 request.site(), request.login(), request.password(), request.notes());
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(VaultEntryDetailResponse.withoutPassword(
                         created.entry().getId(),
+                        created.name(),
                         created.site(),
                         created.login(),
                         request.notes(),
@@ -89,6 +92,7 @@ public class VaultController {
         VaultService.DecryptedEntry entry = vaultService.get(currentUser(principal), id, reveal);
         return new VaultEntryDetailResponse(
                 id,
+                entry.name(),
                 entry.site(),
                 entry.login(),
                 entry.password(),
@@ -107,9 +111,11 @@ public class VaultController {
         VaultService.UpdatedEntry updated = vaultService.update(
                 currentUser(principal),
                 id,
+                request.name(),
                 request.site(), request.login(), request.password(), request.notes());
         return new VaultEntryDetailResponse(
                 id,
+                updated.name(),
                 updated.site(),
                 updated.login(),
                 null,

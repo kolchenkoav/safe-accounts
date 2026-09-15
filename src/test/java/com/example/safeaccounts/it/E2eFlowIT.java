@@ -95,13 +95,13 @@ class E2eFlowIT {
                 .get("accessToken").asText();
     }
 
-    private UUID createEntry(String token, String site, String login,
+private UUID createEntry(String token, String name, String site, String login,
                              String password, String notes) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/vault")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new VaultEntryCreateRequest(site, login, password, notes))))
+                                new VaultEntryCreateRequest(name, site, login, password, notes))))
                 .andExpect(status().isCreated())
                 .andReturn();
         return UUID.fromString(
@@ -117,7 +117,7 @@ class E2eFlowIT {
         assertThat(token).startsWith("sat_");
 
         // 3. Создать запись сейфа
-        UUID id = createEntry(token, "https://e2e.example.com", "e2e-login",
+UUID id = createEntry(token, "E2E-Name", "https://e2e.example.com", "e2e-login",
                 ENTRY_PASSWORD, "e2e-note");
 
         // 4. Получить список записей (без пароля)
@@ -126,29 +126,32 @@ class E2eFlowIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalElements").value(1))
                 .andReturn().getResponse().getContentAsString();
-        assertThat(listBody)
+assertThat(listBody)
                 .doesNotContain(ENTRY_PASSWORD)
                 .doesNotContain("e2e-note")
-                .contains("https://e2e.example.com");
+                .contains("https://e2e.example.com")
+                .contains("E2E-Name");
 
         // 5. Получить детальную запись с reveal=true (пароль раскрывается)
-        mockMvc.perform(get("/api/vault/" + id + "?reveal=true")
+mockMvc.perform(get("/api/vault/" + id + "?reveal=true")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(id.toString()))
+                .andExpect(jsonPath("$.name").value("E2E-Name"))
                 .andExpect(jsonPath("$.site").value("https://e2e.example.com"))
                 .andExpect(jsonPath("$.login").value("e2e-login"))
                 .andExpect(jsonPath("$.password").value(ENTRY_PASSWORD))
                 .andExpect(jsonPath("$.notes").value("e2e-note"));
 
         // 6. Обновить запись
-        mockMvc.perform(put("/api/vault/" + id)
+mockMvc.perform(put("/api/vault/" + id)
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new VaultEntryUpdateRequest(
-                                "https://e2e-updated.example.com", "e2e-login-2",
+                                "E2E-Name-2", "https://e2e-updated.example.com", "e2e-login-2",
                                 "E2e-New-Pass-42!", "e2e-note-2"))))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("E2E-Name-2"))
                 .andExpect(jsonPath("$.site").value("https://e2e-updated.example.com"))
                 .andExpect(jsonPath("$.password").doesNotExist());
 
@@ -166,7 +169,7 @@ class E2eFlowIT {
     @Test
     void secondUserHasNoAccessToFirstUsersEntries() throws Exception {
         String ownerToken = registerAndLogin("e2e-owner");
-        UUID id = createEntry(ownerToken, "https://private-e2e.example.com",
+UUID id = createEntry(ownerToken, "Owner-Private", "https://private-e2e.example.com",
                 "owner-login", ENTRY_PASSWORD, "owner-note");
 
         String otherToken = registerAndLogin("e2e-stranger");
@@ -184,11 +187,11 @@ class E2eFlowIT {
         mockMvc.perform(get("/api/vault/" + id + "?reveal=true")
                         .header("Authorization", "Bearer " + otherToken))
                 .andExpect(status().isNotFound());
-        mockMvc.perform(put("/api/vault/" + id)
+mockMvc.perform(put("/api/vault/" + id)
                         .header("Authorization", "Bearer " + otherToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new VaultEntryUpdateRequest(
-                                "https://attacker.example.com", "attacker", "Attacker-Pass-9!", null))))
+                                "Attacker", "https://attacker.example.com", "attacker", "Attacker-Pass-9!", null))))
                 .andExpect(status().isNotFound());
         mockMvc.perform(delete("/api/vault/" + id)
                         .header("Authorization", "Bearer " + otherToken))
@@ -205,10 +208,11 @@ class E2eFlowIT {
                 .doesNotContain("owner-note")
                 .doesNotContain("https://private-e2e.example.com");
 
-        // Данные владельца не изменились
+// Данные владельца не изменились
         mockMvc.perform(get("/api/vault/" + id + "?reveal=true")
                         .header("Authorization", "Bearer " + ownerToken))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Owner-Private"))
                 .andExpect(jsonPath("$.site").value("https://private-e2e.example.com"))
                 .andExpect(jsonPath("$.password").value(ENTRY_PASSWORD))
                 .andExpect(jsonPath("$.notes").value("owner-note"));
@@ -221,8 +225,8 @@ class E2eFlowIT {
         String tokenA = registerAndLogin("e2e-token-a");
         String tokenB = registerAndLogin("e2e-token-b");
 
-        UUID idA = createEntry(tokenA, "https://a.example.com", "la", ENTRY_PASSWORD, null);
-        UUID idB = createEntry(tokenB, "https://b.example.com", "lb", ENTRY_PASSWORD, null);
+UUID idA = createEntry(tokenA, "A-Label", "https://a.example.com", "la", ENTRY_PASSWORD, null);
+        UUID idB = createEntry(tokenB, "B-Label", "https://b.example.com", "lb", ENTRY_PASSWORD, null);
 
         // Токен A видит только свою запись, токен B — только свою
         String listA = mockMvc.perform(get("/api/vault")

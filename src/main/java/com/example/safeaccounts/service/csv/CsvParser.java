@@ -1,5 +1,7 @@
 package com.example.safeaccounts.service.csv;
 
+import org.springframework.stereotype.Component;
+
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -16,10 +18,11 @@ import java.util.List;
  *   <li>лишние колонки (после 5-й) тихо игнорируются при разборе
  *       в {@link CsvExportRow} (см. {@link #parseDataRows}).</li>
  * </ul>
- * <p>
- * Класс stateless — не {@code @Service}/{@code @Component}, используется
- * напрямую через {@code new} или как {@code static}-методы.
+* <p>
+ * Класс stateless — {@code @Component}-бин, может также создаваться через {@code new}
+ * в unit-тестах без поднятия Spring-контекста.
  */
+@Component
 public class CsvParser {
 
     /**

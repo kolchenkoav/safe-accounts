@@ -98,13 +98,13 @@ class VaultApiIT {
                 .get("accessToken").asText();
     }
 
-    private UUID createEntry(String token, String site, String login,
+private UUID createEntry(String token, String name, String site, String login,
                              String password, String notes) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/vault")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new VaultEntryCreateRequest(site, login, password, notes))))
+                                new VaultEntryCreateRequest(name, site, login, password, notes))))
                 .andExpect(status().isCreated())
                 .andReturn();
         return UUID.fromString(
@@ -113,17 +113,18 @@ class VaultApiIT {
 
     // -- тесты ----------------------------------------------------------------
 
-    @Test
+@Test
     void fullCrudCycleWorks() throws Exception {
         String token = registerAndLogin("vault-crud");
 
         // create
-        UUID id = createEntry(token, "https://example.com", "alice", ENTRY_PASSWORD, "note-1");
+        UUID id = createEntry(token, "Gmail", "https://example.com", "alice", ENTRY_PASSWORD, "note-1");
 
         // read (без reveal: пароль отсутствует)
         mockMvc.perform(get("/api/vault/" + id).header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(id.toString()))
+                .andExpect(jsonPath("$.name").value("Gmail"))
                 .andExpect(jsonPath("$.site").value("https://example.com"))
                 .andExpect(jsonPath("$.login").value("alice"))
                 .andExpect(jsonPath("$.password").doesNotExist())
@@ -134,8 +135,11 @@ class VaultApiIT {
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new VaultEntryUpdateRequest("https://new.example.com", "bob", "New-Pass-456!", null))))
+                                new VaultEntryUpdateRequest(
+                                        "Gmail2",
+                                        "https://new.example.com", "bob", "New-Pass-456!", null))))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Gmail2"))
                 .andExpect(jsonPath("$.site").value("https://new.example.com"))
                 .andExpect(jsonPath("$.login").value("bob"))
                 .andExpect(jsonPath("$.password").doesNotExist())
@@ -145,6 +149,7 @@ class VaultApiIT {
         mockMvc.perform(get("/api/vault/" + id + "?reveal=true")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Gmail2"))
                 .andExpect(jsonPath("$.password").value("New-Pass-456!"));
 
         // delete
@@ -154,11 +159,11 @@ class VaultApiIT {
                 .andExpect(status().isNotFound());
     }
 
-    @Test
+@Test
     void listDoesNotContainPasswordsOrNotes() throws Exception {
         String token = registerAndLogin("vault-list");
-        createEntry(token, "https://a.example.com", "alice", ENTRY_PASSWORD, "secret-note");
-        createEntry(token, "https://b.example.com", "bob", ENTRY_PASSWORD, null);
+        createEntry(token, "Gmail-A", "https://a.example.com", "alice", ENTRY_PASSWORD, "secret-note");
+        createEntry(token, "Gmail-B", "https://b.example.com", "bob", ENTRY_PASSWORD, null);
 
         String body = mockMvc.perform(get("/api/vault")
                         .header("Authorization", "Bearer " + token))
@@ -169,14 +174,15 @@ class VaultApiIT {
 
         // Пароли и примечания не должны встречаться нигде в ответе списка
         assertThat(body).doesNotContain(ENTRY_PASSWORD).doesNotContain("secret-note");
-        assertThat(body).contains("https://a.example.com").contains("alice");
+        assertThat(body).contains("https://a.example.com").contains("alice")
+                .contains("Gmail-A").contains("Gmail-B");
     }
 
     @Test
     void foreignEntryIsInaccessibleAndIndistinguishableFromMissing() throws Exception {
         String ownerToken = registerAndLogin("vault-owner");
         String attackerToken = registerAndLogin("vault-attacker");
-        UUID entryId = createEntry(ownerToken, "https://private.example.com", "alice", ENTRY_PASSWORD, null);
+UUID entryId = createEntry(ownerToken, "Private", "https://private.example.com", "alice", ENTRY_PASSWORD, null);
 
         // Чужая запись: единый нейтральный 404 на все операции
         mockMvc.perform(get("/api/vault/" + entryId).header("Authorization", "Bearer " + attackerToken))
@@ -188,7 +194,8 @@ class VaultApiIT {
                         .header("Authorization", "Bearer " + attackerToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new VaultEntryUpdateRequest("https://evil.example.com", "x", "Evil-Pass-789!", null))))
+                                new VaultEntryUpdateRequest(
+                                        "Evil", "https://evil.example.com", "x", "Evil-Pass-789!", null))))
                 .andExpect(status().isNotFound());
         mockMvc.perform(delete("/api/vault/" + entryId).header("Authorization", "Bearer " + attackerToken))
                 .andExpect(status().isNotFound());
@@ -201,13 +208,14 @@ class VaultApiIT {
                 .andExpect(jsonPath("$.password").value(ENTRY_PASSWORD));
     }
 
-    @Test
+@Test
     void databaseStoresOnlyCiphertexts() throws Exception {
         String token = registerAndLogin("vault-cipher");
-        UUID id = createEntry(token, "https://example.com", "alice", ENTRY_PASSWORD, "plain-note");
+        UUID id = createEntry(token, "CipherLabel", "https://example.com", "alice", ENTRY_PASSWORD, "plain-note");
 
         transactionTemplate.executeWithoutResult(status -> {
             var entry = vaultEntryRepository.findById(id).orElseThrow();
+            assertThat(entry.getNameEnc()).doesNotContain("CipherLabel");
             assertThat(entry.getSiteEnc()).doesNotContain("example.com");
             assertThat(entry.getLoginEnc()).doesNotContain("alice");
             assertThat(entry.getPasswordEnc()).doesNotContain(ENTRY_PASSWORD);
@@ -216,11 +224,11 @@ class VaultApiIT {
         });
     }
 
-    @Test
+@Test
     void twoEntriesHaveDifferentCiphertextsForSamePassword() throws Exception {
         String token = registerAndLogin("vault-iv");
-        UUID id1 = createEntry(token, "https://x.example.com", "l1", ENTRY_PASSWORD, null);
-        UUID id2 = createEntry(token, "https://y.example.com", "l2", ENTRY_PASSWORD, null);
+        UUID id1 = createEntry(token, "X-Label", "https://x.example.com", "l1", ENTRY_PASSWORD, null);
+        UUID id2 = createEntry(token, "Y-Label", "https://y.example.com", "l2", ENTRY_PASSWORD, null);
 
         transactionTemplate.executeWithoutResult(status -> {
             var e1 = vaultEntryRepository.findById(id1).orElseThrow();
@@ -230,10 +238,10 @@ class VaultApiIT {
         });
     }
 
-    @Test
+@Test
     void updateReencryptsInDatabase() throws Exception {
         String token = registerAndLogin("vault-reenc");
-        UUID id = createEntry(token, "https://example.com", "alice", ENTRY_PASSWORD, null);
+        UUID id = createEntry(token, "Reenc-Label", "https://example.com", "alice", ENTRY_PASSWORD, null);
         String encBefore = transactionTemplate.execute(s ->
                 vaultEntryRepository.findById(id).orElseThrow().getPasswordEnc());
 
@@ -241,33 +249,50 @@ class VaultApiIT {
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new VaultEntryUpdateRequest("https://example.com", "alice", "New-Pass-789!", null))))
+                                new VaultEntryUpdateRequest(
+                                        "Reenc-Label2", "https://example.com", "alice", "New-Pass-789!", null))))
                 .andExpect(status().isOk());
 
         transactionTemplate.executeWithoutResult(status -> {
             var entry = vaultEntryRepository.findById(id).orElseThrow();
             assertThat(entry.getPasswordEnc()).isNotEqualTo(encBefore);
             assertThat(entry.getPasswordEnc()).doesNotContain("New-Pass-789!");
+            assertThat(entry.getNameEnc()).doesNotContain("Reenc-Label2");
         });
     }
 
-    @Test
+@Test
     void validationRejectsInvalidPayloads() throws Exception {
         String token = registerAndLogin("vault-valid");
 
-        // Пустой site
+// Пустой site
         mockMvc.perform(post("/api/vault")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new VaultEntryCreateRequest(" ", "login", ENTRY_PASSWORD, null))))
+                                new VaultEntryCreateRequest("x", " ", "login", ENTRY_PASSWORD, null))))
+                .andExpect(status().isBadRequest());
+        // Пустое name
+        mockMvc.perform(post("/api/vault")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new VaultEntryCreateRequest(" ", "site", "login", ENTRY_PASSWORD, null))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("about:blank"));
+        // Превышение длины name
+        mockMvc.perform(post("/api/vault")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new VaultEntryCreateRequest("n".repeat(257), "site", "login", ENTRY_PASSWORD, null))))
                 .andExpect(status().isBadRequest());
         // Превышение длины пароля
         mockMvc.perform(post("/api/vault")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new VaultEntryCreateRequest("site", "login", "p".repeat(4097), null))))
+                                new VaultEntryCreateRequest("x", "site", "login", "p".repeat(4097), null))))
                 .andExpect(status().isBadRequest());
         // Некорректный JSON
         mockMvc.perform(post("/api/vault")
@@ -281,20 +306,20 @@ class VaultApiIT {
                 .andExpect(status().isNotFound());
     }
 
-    @Test
+@Test
     void vaultRequiresAuthentication() throws Exception {
         mockMvc.perform(get("/api/vault")).andExpect(status().isUnauthorized());
         mockMvc.perform(post("/api/vault")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new VaultEntryCreateRequest("s", "l", "p", null))))
+                                new VaultEntryCreateRequest("n", "s", "l", "p", null))))
                 .andExpect(status().isUnauthorized());
     }
 
-    @Test
+@Test
     void vaultEventsAreAuditedWithoutSecrets() throws Exception {
         String token = registerAndLogin("vault-audit");
-        UUID id = createEntry(token, "https://example.com", "alice", ENTRY_PASSWORD, "top-secret-note");
+        UUID id = createEntry(token, "Audit-Label", "https://example.com", "alice", ENTRY_PASSWORD, "top-secret-note");
 
         mockMvc.perform(get("/api/vault/" + id + "?reveal=true")
                         .header("Authorization", "Bearer " + token))
@@ -303,7 +328,9 @@ class VaultApiIT {
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new VaultEntryUpdateRequest("https://example.com", "alice2", ENTRY_PASSWORD, null))))
+                                new VaultEntryUpdateRequest(
+                                        "Audit-Label2",
+                                        "https://example.com", "alice2", ENTRY_PASSWORD, null))))
                 .andExpect(status().isOk());
         mockMvc.perform(delete("/api/vault/" + id).header("Authorization", "Bearer " + token))
                 .andExpect(status().isNoContent());
@@ -329,13 +356,13 @@ class VaultApiIT {
         });
     }
 
-    @Test
+@Test
     void adminHasNoImplicitAccessToForeignEntries() throws Exception {
         // Bootstrap-админ создается только на ПУСТОЙ БД (hasAnyUsers), поэтому
         // сначала админ, потом обычный пользователь.
         String adminToken = loginAdmin();
         String userToken = registerAndLogin("vault-user");
-        UUID entryId = createEntry(userToken, "https://example.com", "alice", ENTRY_PASSWORD, null);
+        UUID entryId = createEntry(userToken, "User-Label", "https://example.com", "alice", ENTRY_PASSWORD, null);
 
         mockMvc.perform(get("/api/vault/" + entryId).header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isNotFound());
@@ -356,12 +383,12 @@ class VaultApiIT {
                 .get("accessToken").asText();
     }
 
-    @Test
+@Test
     void listPaginationAndSortingWorks() throws Exception {
         String token = registerAndLogin("vault-page");
-        createEntry(token, "https://1.example.com", "l1", ENTRY_PASSWORD, null);
-        createEntry(token, "https://2.example.com", "l2", ENTRY_PASSWORD, null);
-        createEntry(token, "https://3.example.com", "l3", ENTRY_PASSWORD, null);
+        createEntry(token, "L1", "https://1.example.com", "l1", ENTRY_PASSWORD, null);
+        createEntry(token, "L2", "https://2.example.com", "l2", ENTRY_PASSWORD, null);
+        createEntry(token, "L3", "https://3.example.com", "l3", ENTRY_PASSWORD, null);
 
         mockMvc.perform(get("/api/vault?page=0&size=2")
                         .header("Authorization", "Bearer " + token))

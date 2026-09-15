@@ -25,8 +25,9 @@ import java.util.UUID;
  * <p>
  * Правила безопасности (AGENTS.md / Task-05):
  * <ul>
- *   <li>все чувствительные поля (site, login, password, notes) перед сохранением
- *       шифруются AES-256-GCM персональным DEK владельца; в БД нет plaintext;</li>
+ *   <li>все чувствительные поля (name, site, login, password, notes) перед
+ *       сохранением шифруются AES-256-GCM персональным DEK владельца;
+ *       в БД нет plaintext;</li>
  *   <li>DEK разворачивается из wrapped-формы через {@link AesGcmCryptoService#unwrapDek}
  *       (KEK берется из окружения, материал ключей в БД/логах отсутствует);</li>
  *   <li>любая операция owner-scoped: чужая запись неотличима от несуществующей
@@ -64,32 +65,30 @@ public class VaultService {
         this.clock = clock;
     }
 
-    /** Результат создания записи: сущность + расшифрованные site/login для ответа. */
-    public record CreatedEntry(VaultEntry entry, String site, String login) {
+    /** Результат создания записи: сущность + расшифрованные name/site/login для ответа. */
+    public record CreatedEntry(VaultEntry entry, String name, String site, String login) {
     }
 
     /** Расшифрованные поля записи для детального просмотра. */
-    public record DecryptedEntry(String site, String login, String password, String notes,
+    public record DecryptedEntry(String name, String site, String login, String password, String notes,
                                  Instant createdAt, Instant updatedAt) {
     }
 
     /**
      * Создает запись: шифрует все поля DEK владельца и сохраняет.
      *
-* @throws IllegalArgumentException если поля не проходят сервисную валидацию
+     * @throws IllegalArgumentException если поля не проходят сервисную валидацию
      */
     @Transactional
-    public CreatedEntry create(User owner, String site, String login, String password, String notes) {
+    public CreatedEntry create(User owner, String name, String site, String login,
+                               String password, String notes) {
         SecretKey dek = unwrapDek(owner);
         Instant now = clock.instant();
 
-String siteEnc = cryptoService.encrypt(site, dek);
+        String nameEnc = cryptoService.encrypt(name, dek);
+        String siteEnc = cryptoService.encrypt(site, dek);
         // notes==null значит «примечания нет»: в БД NULL, а не шифротекст пустой строки.
         String notesEnc = notes == null ? null : cryptoService.encrypt(notes, dek);
-        // До Phase 04 в сервисе нет явного параметра name — как placeholder
-        // используется зашифрованный site (согласуется с V2 бэкфиллом).
-        // В Phase 04 будет явный параметр name и отдельные IV.
-        String nameEnc = siteEnc;
 
         VaultEntry entry = new VaultEntry(
                 UUID.randomUUID(),
@@ -106,12 +105,12 @@ String siteEnc = cryptoService.encrypt(site, dek);
         auditService.record(owner, AuditService.SECRET_CREATED, null,
                 "VaultEntry", saved.getId().toString(), null);
         log.info("Vault entry created: user={}, entryId={}", owner.getId(), saved.getId());
-        return new CreatedEntry(saved, site, login);
+        return new CreatedEntry(saved, name, site, login);
     }
 
     /**
      * Пагинированный список записей владельца, отсортированный по createdAt (Task-05).
-     * Возвращает только шифротексты; расшифровка site/login выполняется здесь,
+     * Возвращает только шифротексты; расшифровка name/site/login выполняется здесь,
      * пароль и notes намеренно не расшифровываются.
      */
     @Transactional(readOnly = true)
@@ -151,14 +150,15 @@ String siteEnc = cryptoService.encrypt(site, dek);
      */
     @Transactional
     public UpdatedEntry update(User owner, UUID entryId,
-                               String site, String login, String password, String notes) {
+                               String name, String site, String login,
+                               String password, String notes) {
         VaultEntry entry = findOwnedOrThrow(owner, entryId);
         SecretKey dek = unwrapDek(owner);
         Instant now = clock.instant();
 
         String notesEnc = notes == null ? null : cryptoService.encrypt(notes, dek);
-entry.updateEncrypted(
-                cryptoService.encrypt(site, dek),  // nameEnc placeholder
+        entry.updateEncrypted(
+                cryptoService.encrypt(name, dek),
                 cryptoService.encrypt(site, dek),
                 cryptoService.encrypt(login, dek),
                 cryptoService.encrypt(password, dek),
@@ -168,11 +168,12 @@ entry.updateEncrypted(
         auditService.record(owner, AuditService.SECRET_UPDATED, null,
                 "VaultEntry", entryId.toString(), null);
         log.info("Vault entry updated: user={}, entryId={}", owner.getId(), entryId);
-        return new UpdatedEntry(saved, entry.getVersion(), site, login);
+        return new UpdatedEntry(saved, entry.getVersion(), name, site, login);
     }
 
     /** Результат обновления: сущность + версия ДО обновления (для ответа API). */
-    public record UpdatedEntry(VaultEntry entry, Long previousVersion, String site, String login) {
+    public record UpdatedEntry(VaultEntry entry, Long previousVersion,
+                               String name, String site, String login) {
     }
 
     /**
@@ -210,6 +211,7 @@ entry.updateEncrypted(
         try {
             String password = reveal ? cryptoService.decrypt(entry.getPasswordEnc(), dek) : null;
             return new DecryptedEntry(
+                    cryptoService.decrypt(entry.getNameEnc(), dek),
                     cryptoService.decrypt(entry.getSiteEnc(), dek),
                     cryptoService.decrypt(entry.getLoginEnc(), dek),
                     password,
@@ -222,12 +224,13 @@ entry.updateEncrypted(
         }
     }
 
-    /** Расшифровывает только site/login для элемента списка; пароль не трогаем. */
+    /** Расшифровывает только name/site/login для элемента списка; пароль не трогаем. */
     private ListItem toListItem(User owner, VaultEntry entry) {
         SecretKey dek = unwrapDek(owner);
         try {
             return new ListItem(
                     entry.getId(),
+                    cryptoService.decrypt(entry.getNameEnc(), dek),
                     cryptoService.decrypt(entry.getSiteEnc(), dek),
                     cryptoService.decrypt(entry.getLoginEnc(), dek),
                     entry.getCreatedAt(),
@@ -239,7 +242,7 @@ entry.updateEncrypted(
     }
 
     /** Элемент списка: без пароля и notes (Task-05). */
-    public record ListItem(UUID id, String site, String login,
+    public record ListItem(UUID id, String name, String site, String login,
                            Instant createdAt, Instant updatedAt, Long version) {
     }
 }

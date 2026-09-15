@@ -43,8 +43,9 @@ public class WebVaultController {
         this.vaultService = vaultService;
     }
 
-    /** Форма и данные страницы списка (без паролей — Task-11/Task-05). */
+/** Форма и данные страницы списка (без паролей — Task-11/Task-05). */
     public record EntryForm(
+            @NotBlank @Size(max = 256) String name,
             @NotBlank @Size(max = 2048) String site,
             @NotBlank @Size(max = 2048) String login,
             @NotBlank @Size(max = 4096) String password,
@@ -67,7 +68,7 @@ public class WebVaultController {
     /** Страница создания записи. */
     @GetMapping("/web/entries/new")
     public String newEntry(Model model) {
-        model.addAttribute("entryForm", new EntryForm("", "", "", ""));
+model.addAttribute("entryForm", new EntryForm("", "", "", "", ""));
         return "entry-form";
     }
 
@@ -76,7 +77,7 @@ public class WebVaultController {
     public String create(@AuthenticationPrincipal AuthUser principal,
                          @Valid @ModelAttribute("entryForm") EntryForm form,
                          RedirectAttributes redirectAttributes) {
-        vaultService.create(principal.user(), form.site(), form.login(),
+vaultService.create(principal.user(), form.name(), form.site(), form.login(),
                 form.password(), emptyToNull(form.notes()));
         redirectAttributes.addFlashAttribute("flashMessage", "Запись создана");
         return "redirect:/web/entries";
@@ -134,7 +135,7 @@ public class WebVaultController {
         }
         // password в форму НЕ выносим: старый пароль не должен попадать в HTML.
         model.addAttribute("entryId", id);
-        model.addAttribute("entryForm", new EntryForm(entry.site(), entry.login(), "", entry.notes()));
+model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.login(), "", entry.notes()));
         return "entry-form-edit";
     }
 
@@ -146,7 +147,7 @@ public class WebVaultController {
                          RedirectAttributes redirectAttributes,
                          Model model) {
         try {
-            vaultService.update(principal.user(), id, form.site(), form.login(),
+vaultService.update(principal.user(), id, form.name(), form.site(), form.login(),
                     form.password(), emptyToNull(form.notes()));
             redirectAttributes.addFlashAttribute("flashMessage", "Запись обновлена");
             return "redirect:/web/entries";

@@ -106,13 +106,13 @@ class SecurityChecksIT {
                 .get("accessToken").asText();
     }
 
-    private UUID createEntry(String token, String site, String login,
+private UUID createEntry(String token, String name, String site, String login,
                              String password, String notes) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/vault")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new VaultEntryCreateRequest(site, login, password, notes))))
+                                new VaultEntryCreateRequest(name, site, login, password, notes))))
                 .andExpect(status().isCreated())
                 .andReturn();
         return UUID.fromString(
@@ -124,7 +124,7 @@ class SecurityChecksIT {
     @Test
     void vaultEntriesTableHasNoPlaintextValues() throws Exception {
         String token = registerAndLogin("sec-vault");
-        UUID id = createEntry(token, "https://secret-site.example.com", "secret-login",
+UUID id = createEntry(token, "Secret-Label", "https://secret-site.example.com", "secret-login",
                 ENTRY_PASSWORD, "secret-note");
 
         transactionTemplate.executeWithoutResult(status -> {
@@ -258,7 +258,7 @@ class SecurityChecksIT {
     void authorizationErrorsDoNotLeakInformation() throws Exception {
         String ownerToken = registerAndLogin("sec-owner");
         String attackerToken = registerAndLogin("sec-attacker");
-        UUID entryId = createEntry(ownerToken, "https://leak-test.example.com",
+UUID entryId = createEntry(ownerToken, "Leak-Test-Label", "https://leak-test.example.com",
                 "owner-login", ENTRY_PASSWORD, "owner-note");
 
         // Чужая запись: 404 без данных
@@ -305,9 +305,9 @@ class SecurityChecksIT {
     @Test
     void noPlaintextAfterUpdateAndAcrossMultipleEntries() throws Exception {
         String token = registerAndLogin("sec-multi");
-        UUID id1 = createEntry(token, "https://one.example.com", "login-1",
+UUID id1 = createEntry(token, "One-Label", "https://one.example.com", "login-1",
                 ENTRY_PASSWORD, "note-1");
-        UUID id2 = createEntry(token, "https://two.example.com", "login-2",
+        UUID id2 = createEntry(token, "Two-Label", "https://two.example.com", "login-2",
                 ENTRY_PASSWORD, "note-2");
 
         // Обновляем первую запись — в БД не должно остаться plaintext после UPDATE
@@ -315,8 +315,8 @@ class SecurityChecksIT {
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new com.example.safeaccounts.api.VaultEntryUpdateRequest(
-                                        "https://one-updated.example.com", "login-1-upd",
+new com.example.safeaccounts.api.VaultEntryUpdateRequest(
+                                        "One-Label-Upd", "https://one-updated.example.com", "login-1-upd",
                                         "New-Sec-Pass-42!", "note-1-upd"))))
                 .andExpect(status().isOk());
 

@@ -334,7 +334,7 @@ class AdminApiIT {
         UUID uid = userId("rotate-user");
 
         // Секрет до ротации.
-        UUID entryId = createEntry(userToken, "https://example.com", "alice", "Entry-Pass-123!", "note-1");
+UUID entryId = createEntry(userToken, "Admin-Label", "https://example.com", "alice", "Entry-Pass-123!", "note-1");
         String wrappedBefore = transactionTemplate.execute(status ->
                 userRepository.findById(uid).orElseThrow().getDekWrapped());
 
@@ -424,13 +424,13 @@ class AdminApiIT {
         }
     }
 
-    private UUID createEntry(String token, String site, String login,
+private UUID createEntry(String token, String name, String site, String login,
                              String password, String notes) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/vault")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new VaultEntryCreateRequest(site, login, password, notes))))
+                                new VaultEntryCreateRequest(name, site, login, password, notes))))
                 .andExpect(status().isCreated())
                 .andReturn();
         return UUID.fromString(

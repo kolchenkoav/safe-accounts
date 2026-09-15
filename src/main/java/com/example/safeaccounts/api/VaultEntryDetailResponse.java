@@ -10,6 +10,7 @@ import java.util.UUID;
  */
 public record VaultEntryDetailResponse(
         UUID id,
+        String name,
         String site,
         String login,
         String password,
@@ -20,8 +21,8 @@ public record VaultEntryDetailResponse(
 
     /** Фабрика ответа без расшифрованного пароля (reveal=false). */
     public static VaultEntryDetailResponse withoutPassword(
-            UUID id, String site, String login, String notes,
+            UUID id, String name, String site, String login, String notes,
             Instant createdAt, Instant updatedAt, long version) {
-        return new VaultEntryDetailResponse(id, site, login, null, notes, createdAt, updatedAt, version);
+        return new VaultEntryDetailResponse(id, name, site, login, null, notes, createdAt, updatedAt, version);
     }
 }

@@ -82,11 +82,11 @@ class VaultServiceTest {
     void createEncryptsAllFieldsWithOwnerDek() {
         when(vaultEntryRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        VaultService.CreatedEntry created = vaultService.create(
-                owner, "https://example.com", "alice", "S3cret-Pass!", "my note");
+VaultService.CreatedEntry created = vaultService.create(
+                owner, "MyAccount", "https://example.com", "alice", "S3cret-Pass!", "my note");
 
         VaultEntry saved = created.entry();
-        assertThat(saved.getNameEnc()).isNotEqualTo("https://example.com");
+        assertThat(saved.getNameEnc()).isNotEqualTo("MyAccount");
         assertThat(saved.getSiteEnc()).isNotEqualTo("https://example.com");
         assertThat(saved.getLoginEnc()).isNotEqualTo("alice");
         assertThat(saved.getPasswordEnc()).isNotEqualTo("S3cret-Pass!");
@@ -94,7 +94,7 @@ class VaultServiceTest {
         // Все поля реально расшифровываются DEK владельца
         SecretKey dek = cryptoService.unwrapDek(new com.example.safeaccounts.crypto.WrappedDek(
                 owner.getDekWrapped(), owner.getDekIv(), owner.getDekKekId()));
-        assertThat(cryptoService.decrypt(saved.getNameEnc(), dek)).isEqualTo("https://example.com");
+        assertThat(cryptoService.decrypt(saved.getNameEnc(), dek)).isEqualTo("MyAccount");
         assertThat(cryptoService.decrypt(saved.getSiteEnc(), dek)).isEqualTo("https://example.com");
         assertThat(cryptoService.decrypt(saved.getLoginEnc(), dek)).isEqualTo("alice");
         assertThat(cryptoService.decrypt(saved.getPasswordEnc(), dek)).isEqualTo("S3cret-Pass!");
@@ -106,7 +106,7 @@ class VaultServiceTest {
     @Test
     void createWithNullNotesStoresNullNotesEnc() {
         when(vaultEntryRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
-        VaultService.CreatedEntry created = vaultService.create(owner, "s", "l", "p", null);
+VaultService.CreatedEntry created = vaultService.create(owner, "n", "s", "l", "p", null);
         assertThat(created.entry().getNotesEnc()).isNull();
     }
 
@@ -177,7 +177,7 @@ class VaultServiceTest {
                 .thenReturn(Optional.of(entry));
         when(vaultEntryRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        vaultService.update(owner, entryId, "new-site", "new-login", "new-pass", "note");
+vaultService.update(owner, entryId, "new-name", "new-site", "new-login", "new-pass", "note");
 
         ArgumentCaptor<VaultEntry> captor = ArgumentCaptor.forClass(VaultEntry.class);
         verify(vaultEntryRepository).saveAndFlush(captor.capture());

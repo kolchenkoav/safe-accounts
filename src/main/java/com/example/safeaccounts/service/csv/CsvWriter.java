@@ -1,5 +1,7 @@
 package com.example.safeaccounts.service.csv;
 
+import org.springframework.stereotype.Component;
+
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -19,6 +21,7 @@ import java.nio.charset.StandardCharsets;
  * <p>
  * Никаких внешних библиотек (нет opencsv/commons-csv/univocity).
  */
+@Component
 public class CsvWriter {
 
     /** Заголовок — строго в этом порядке. */

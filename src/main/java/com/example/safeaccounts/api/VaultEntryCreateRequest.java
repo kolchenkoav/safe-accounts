@@ -9,6 +9,10 @@ import jakarta.validation.constraints.Size;
  */
 public record VaultEntryCreateRequest(
         @NotBlank
+        @Size(max = 256)
+        String name,
+
+        @NotBlank
         @Size(max = 2048)
         String site,
 
