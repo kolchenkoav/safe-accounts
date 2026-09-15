@@ -13,8 +13,9 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
  * НЕ перехвачен advice ({@code @ControllerAdvice} живёт только внутри
  * DispatcherServlet и не видит исключений из фильтров). Нативные исключения
  * Tomcat из фильтров этим error-page НЕ покрываются — он матчится по
- * Spring-типу исключения. Фактический исход web-oversize — 302 (advice
- * при падении в резолвере); см. OversizeUploadIT, допускает 302|413.
+ * Spring-типу исключения. Фактический исход web-oversize — строго 302
+ * (advice при падении в резолвере; OversizeUploadIT ассертит именно 302;
+ * 413-ветка — страховка этого error-page).
  * <p>
  * Не конфликтует с /error (BasicErrorController): наш путь специфичен
  * по типу исключения и перехватывает его раньше дефолтной страницы.

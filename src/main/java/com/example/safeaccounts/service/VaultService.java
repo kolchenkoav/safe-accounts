@@ -145,6 +145,17 @@ public class VaultService {
         Page<VaultEntry> entries = tagId == null
                 ? vaultEntryRepository.findAllByUser_Id(owner.getId(), pageable)
                 : vaultEntryRepository.findAllByUser_IdAndTags_Id(owner.getId(), tagId, pageable);
+        // Клампинг страницы (Фаза 5): page за пределами диапазона → последняя
+        // существующая страница (глубокие ссылки/устаревшая пагинация),
+        // а не пустая страница.
+        if (entries.getContent().isEmpty() && entries.getTotalPages() > 0
+                && Math.max(page, 0) >= entries.getTotalPages()) {
+            pageable = PageRequest.of(entries.getTotalPages() - 1, safeSize,
+                    Sort.by(Sort.Direction.ASC, "createdAt"));
+            entries = tagId == null
+                    ? vaultEntryRepository.findAllByUser_Id(owner.getId(), pageable)
+                    : vaultEntryRepository.findAllByUser_IdAndTags_Id(owner.getId(), tagId, pageable);
+        }
         Map<UUID, List<TagView>> tagsByEntry = loadTags(
                 entries.getContent().stream().map(VaultEntry::getId).toList());
         return entries.map(entry -> toListItem(owner, entry,

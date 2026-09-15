@@ -161,6 +161,12 @@ public class VaultExportImportService {
     // -- импорт --------------------------------------------------------------
 
     /**
+     * Максимум ошибок в отчёте импорта (Фаза 5): сверх — сентинел
+     * «… ещё N ошибок (показаны первые 100)»; счётчик failed остаётся точным.
+     */
+    static final int MAX_IMPORT_ERRORS = 100;
+
+    /**
      * Импортирует записи из CSV.
      * <p>
      * Транзакционный: при {@code failFast=true} первая ошибка откатывает все
@@ -168,7 +174,18 @@ public class VaultExportImportService {
      * {@code errors[]}, валидные строки применяются. При {@code dryRun=true}
      * никаких изменений в БД не делается (но отчёт и аудит возвращаются).
      *
-     * @throws PayloadTooLargeException если csv.length > {@value #MAX_CSV_BYTES}
+     * @throws PayloadTooLargeException асимметрично (fix B4):
+     *                                  csv.length &gt; {@value #MAX_CSV_BYTES} —
+     *                                  всегда; строк в файле &gt;
+     *                                  {@value #MAX_EXPORT_ROWS} — мягко:
+     *                                  ImportError(row=0, "too many rows") в
+     *                                  отчёте (жёсткое исключение только при
+     *                                  failFast; dryRun работает);
+     *                                  cumulative (existing + rows &gt;
+     *                                  {@value #MAX_EXPORT_ROWS}) — ВСЕГДА
+     *                                  жёсткое исключение, включая dryRun
+     *                                  (консервативен: при skip реальный
+     *                                  прирост меньше)
      * @throws InvalidCsvException      при невалидном заголовке/парсинге и
      *                                  {@code failFast=true}
      * @throws AccessDeniedException    если actor не имеет права на target
@@ -209,6 +226,20 @@ public class VaultExportImportService {
                     List.of(), List.of(new ImportError(0,
                             "too many rows: " + rows.size() + " > " + MAX_EXPORT_ROWS)),
                     rows.size(), 0, 0, 0, 1);
+        }
+
+        // Фаза 5 (B5): консервативный cumulative-cap. ПРЕ-чек до обработки:
+        // существующие записи target + строки файла не должны превышать лимит
+        // сейфа. Осознанно консервативен: при skip реальные дубли пропускаются
+        // (реальный прирост меньше), а dryRun показывает тот же отказ —
+        // защита от раздувания сейфа массовым импортом важнее точности
+        // оценки прироста. REST — 413 (PayloadTooLargeException), web — flash.
+        long existingEntries = vaultEntryRepository.countByUser_Id(target.getId());
+        if (existingEntries + rows.size() > MAX_EXPORT_ROWS) {
+            throw new PayloadTooLargeException(
+                    "Cumulative vault limit exceeded: existing entries ("
+                            + existingEntries + ") + CSV rows (" + rows.size()
+                            + ") > " + MAX_EXPORT_ROWS);
         }
 
         SecretKey dek = unwrapDek(target);
@@ -271,8 +302,20 @@ public class VaultExportImportService {
             }
         }
 
+        // Фаза 5: в отчёте — первые MAX_IMPORT_ERRORS ошибок + сентинел;
+        // failed остаётся точным (REST-схема отчёта стабильна).
+        List<ImportError> reportedErrors = errors;
+        if (errors.size() > MAX_IMPORT_ERRORS) {
+            int hidden = errors.size() - MAX_IMPORT_ERRORS;
+            List<ImportError> capped =
+                    new ArrayList<>(errors.subList(0, MAX_IMPORT_ERRORS));
+            capped.add(new ImportError(0, "... ещё " + hidden + " ошибок (показаны первые "
+                    + MAX_IMPORT_ERRORS + ")"));
+            reportedErrors = capped;
+        }
+
         return finalizeImport(actor, target, strategy, dryRun, sha256, csvBytes.length,
-                List.of(), errors, rows.size(), created, updated, skipped, failed);
+                List.of(), reportedErrors, rows.size(), created, updated, skipped, failed);
     }
 
     // -- internals -----------------------------------------------------------

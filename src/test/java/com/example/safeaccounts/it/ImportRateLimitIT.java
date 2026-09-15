@@ -20,7 +20,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -64,6 +66,10 @@ class ImportRateLimitIT {
     ObjectMapper objectMapper;
     @Autowired
     RateLimiter rateLimiter;
+    @Autowired
+    com.example.safeaccounts.service.UserService userService;
+    @Autowired
+    com.example.safeaccounts.repository.UserRepository userRepository;
 
     private static final String CSV_BODY =
             "name,url,username,password,note\r\nSite,u,l,p,n\r\n";
@@ -188,5 +194,137 @@ class ImportRateLimitIT {
             return req;
         };
         assertWithinLimit(1, ipB);
+    }
+
+    // -- Фаза 5: web-импорт в том же бакете import ---------------------------------
+
+    @Test
+    void webImportReturns429AfterLimitExceeded() throws Exception {
+        // Анонимные POST (ключ — IP): два не-429 (auth/CSRF ответят позже),
+        // третий — 429 RFC 7807 + Retry-After
+        for (int i = 0; i < 2; i++) {
+            final int attempt = i + 1;
+            mockMvc.perform(multipart("/web/entries/import").file(csvFile()))
+                    .andExpect(result -> {
+                        if (result.getResponse().getStatus() == 429) {
+                            throw new AssertionError("web import " + attempt
+                                    + " must not be rate-limited yet");
+                        }
+                    });
+        }
+        mockMvc.perform(multipart("/web/entries/import").file(csvFile()))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().exists("Retry-After"))
+                .andExpect(jsonPath("$.status").value(429));
+    }
+
+    @Test
+    void webImportLimitDoesNotAffectOtherWebOperations() throws Exception {
+        // Исчерпываем import-бакет web-импортом
+        for (int i = 0; i < 3; i++) {
+            mockMvc.perform(multipart("/web/entries/import").file(csvFile()));
+        }
+        // Разовые операции не страдают: страница логина — не 429
+        mockMvc.perform(get("/web/login"))
+                .andExpect(result -> {
+                    if (result.getResponse().getStatus() == 429) {
+                        throw new AssertionError(
+                                "login page must not be limited by import bucket");
+                    }
+                });
+    }
+
+    @Test
+    void loggedInWebImportIsLimitedPerUsername() throws Exception {
+        // (B1) Сначала исчерпываем IP-ключ import-бакета тремя анонимными
+        // POST: если бы ключ залогиненного web-импорта был IP, первый
+        // такой запрос получил бы 429 — отдельный ключ user:<name>
+        // доказывается тем, что он проходит.
+        for (int i = 0; i < 3; i++) {
+            mockMvc.perform(multipart("/web/entries/import").file(csvFile()));
+        }
+
+        // Ключ web-импорта — username из сессии (план §2.7), а не IP
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"webrl-user\",\"password\":\"Str0ng-Passw0rd!\"}"))
+                .andExpect(status().isCreated());
+        org.springframework.test.web.servlet.MvcResult login = mockMvc.perform(
+                        post("/web/login")
+                                .with(org.springframework.security.test.web.servlet.request
+                                        .SecurityMockMvcRequestPostProcessors.csrf())
+                                .param("username", "webrl-user")
+                                .param("password", "Str0ng-Passw0rd!"))
+                .andExpect(status().is3xxRedirection())
+                .andReturn();
+        var session = (org.springframework.mock.web.MockHttpSession)
+                login.getRequest().getSession();
+
+        // Два импорта проходят (ключ user:webrl-user независим от
+        // исчерпанного IP-ключа), третий — 429
+        for (int i = 0; i < 2; i++) {
+            final int attempt = i + 1;
+            mockMvc.perform(multipart("/web/entries/import").file(csvFile())
+                            .session(session)
+                            .with(org.springframework.security.test.web.servlet.request
+                                    .SecurityMockMvcRequestPostProcessors.csrf()))
+                    .andExpect(result -> {
+                        if (result.getResponse().getStatus() == 429) {
+                            throw new AssertionError("logged-in import " + attempt
+                                    + " must not be rate-limited yet");
+                        }
+                    });
+        }
+        mockMvc.perform(multipart("/web/entries/import").file(csvFile())
+                        .session(session)
+                        .with(org.springframework.security.test.web.servlet.request
+                                .SecurityMockMvcRequestPostProcessors.csrf()))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().exists("Retry-After"));
+    }
+
+    // -- Фаза 5 (fix B2): админ-ветка web-импорта ------------------------------
+
+    @Test
+    void adminWebImportIsLimitedPerAdminUsername() throws Exception {
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"adm-rl-target\",\"password\":\"Str0ng-Passw0rd!\"}"))
+                .andExpect(status().isCreated());
+        userService.register("adm-rl-admin", "Str0ng-Passw0rd!", "ROLE_ADMIN");
+        org.springframework.test.web.servlet.MvcResult login = mockMvc.perform(
+                        post("/web/login")
+                                .with(org.springframework.security.test.web.servlet.request
+                                        .SecurityMockMvcRequestPostProcessors.csrf())
+                                .param("username", "adm-rl-admin")
+                                .param("password", "Str0ng-Passw0rd!"))
+                .andExpect(status().is3xxRedirection())
+                .andReturn();
+        var session = (org.springframework.mock.web.MockHttpSession)
+                login.getRequest().getSession();
+        String adminPath = "/web/admin/users/"
+                + userRepository.findByUsername("adm-rl-target").orElseThrow().getId()
+                + "/vault/import";
+
+        // Два админских импорта не-429 (ключ — username админа), третий — 429
+        for (int i = 0; i < 2; i++) {
+            final int attempt = i + 1;
+            mockMvc.perform(multipart(adminPath).file(csvFile())
+                            .session(session)
+                            .with(org.springframework.security.test.web.servlet.request
+                                    .SecurityMockMvcRequestPostProcessors.csrf()))
+                    .andExpect(result -> {
+                        if (result.getResponse().getStatus() == 429) {
+                            throw new AssertionError("admin web import " + attempt
+                                    + " must not be rate-limited yet");
+                        }
+                    });
+        }
+        mockMvc.perform(multipart(adminPath).file(csvFile())
+                        .session(session)
+                        .with(org.springframework.security.test.web.servlet.request
+                                .SecurityMockMvcRequestPostProcessors.csrf()))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().exists("Retry-After"));
     }
 }

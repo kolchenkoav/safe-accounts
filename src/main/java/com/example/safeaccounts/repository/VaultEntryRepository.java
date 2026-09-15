@@ -35,6 +35,9 @@ public interface VaultEntryRepository extends JpaRepository<VaultEntry, UUID> {
     /** Количество записей, ссылающихся на тег (для сообщения об ошибке удаления). */
     long countByTags_Id(UUID tagId);
 
+    /** Количество записей пользователя (cumulative-cap импорта, Фаза 5). */
+    long countByUser_Id(UUID userId);
+
     /**
      * True, если хотя бы одна запись ссылается на указанный тег.
      * Используется сервисом тегов для запрета удаления «занятого» тега.

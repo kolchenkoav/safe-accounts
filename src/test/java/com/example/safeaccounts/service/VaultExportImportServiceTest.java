@@ -528,4 +528,49 @@ class VaultExportImportServiceTest {
                 .doesNotContain("S3cret")
                 .doesNotContain("alice@gmail.com");
     }
+
+    // -- Фаза 5: cumulative-cap и errors-кап -------------------------------------
+
+    @Test
+    void importRejectsWhenCumulativeCapExceeded() {
+        // 2 валидные строки + 9999 существующих записей = 10001 > 10000
+        byte[] csv = ("name,url,username,password,note\r\n"
+                + "A,https://a.example,u1,p1,\r\n"
+                + "B,https://b.example,u2,p2,\r\n").getBytes();
+        when(vaultEntryRepository.countByUser_Id(any())).thenReturn(9999L);
+
+        assertThatThrownBy(() -> service.importFromCsv(owner, owner, csv,
+                ConflictStrategy.SKIP, false, false))
+                .isInstanceOf(PayloadTooLargeException.class)
+                .hasMessageContaining("Cumulative vault limit exceeded")
+                .hasMessageContaining("9999")
+                .hasMessageContaining("2");
+        // Ничего не создано
+        verify(vaultEntryRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void importErrorsAreCappedAtHundredWithSentinelFailedStaysExact() {
+        // 150 битых строк (пустой password) → failed=150, errors=101 (100+сентинел)
+        StringBuilder rows = new StringBuilder("name,url,username,password,note\r\n");
+        for (int i = 1; i <= 150; i++) {
+            rows.append("R").append(i).append(",https://r.example,u").append(i)
+                    .append(",,\r\n");
+        }
+        when(vaultEntryRepository.findAllByUser_IdOrderByCreatedAtAsc(any()))
+                .thenReturn(List.of());
+        when(vaultEntryRepository.countByUser_Id(any())).thenReturn(0L);
+
+        ImportReport report = service.importFromCsv(owner, owner,
+                rows.toString().getBytes(), ConflictStrategy.SKIP, false, false);
+
+        assertThat(report.failed()).isEqualTo(150);
+        assertThat(report.errors()).hasSize(101);
+        assertThat(report.errors().get(99).row()).isEqualTo(100);
+        assertThat(report.errors().get(100).row()).isZero();
+        assertThat(report.errors().get(100).reason())
+                .contains("ещё 50")
+                .contains("100");
+        assertThat(report.created()).isZero();
+    }
 }

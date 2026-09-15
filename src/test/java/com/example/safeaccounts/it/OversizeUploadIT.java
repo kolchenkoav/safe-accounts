@@ -183,28 +183,22 @@ class OversizeUploadIT {
         ResponseEntity<String> response = rest.exchange("/web/entries/import",
                 HttpMethod.POST, new HttpEntity<>(body, multipartHeaders), String.class);
 
-        // Никакого whitelabel-500. Два допустимых исхода (зависит от того, где
-        // именно упал multipart-парсинг):
-        //  1) 302 — Spring-резолвер у контроллера → WebExceptionAdvice →
-        //     PRG-flash «Файл слишком большой (лимит 10 МБ)...» на форму;
-        //  2) 413 — Tomcat упал раньше (фильтр) → error-dispatch на
-        //     /web/error/file-too-large (тематическая HTML-страница).
-        int code = response.getStatusCode().value();
-        assertThat(code)
-                .as("oversized web import must not produce whitelabel-500")
-                .isIn(302, 413);
-        if (code == 302) {
-            // НЕ редирект на логин (сессия валидна), а на форму импорта
-            assertThat(response.getHeaders().getLocation().getPath())
-                    .isEqualTo("/web/entries/import");
-            HttpHeaders followHeaders = new HttpHeaders();
-            followHeaders.add(HttpHeaders.COOKIE, session);
-            ResponseEntity<String> formPage = rest.exchange("/web/entries/import",
-                    HttpMethod.GET, new HttpEntity<>(followHeaders), String.class);
-            assertThat(formPage.getBody()).contains("10 МБ");
-        } else {
-            assertThat(response.getBody()).contains("10 МБ");
-        }
+        // Фактический исход на этом стеке — 302 advice-PRG (зафиксировано
+        // эмпирически, Фаза 5): multipart падает в Spring-резолвере у
+        // контроллера → WebExceptionAdvice → PRG-flash. 413-ветка через
+        // ErrorPageConfig — страховка для падения парсинга в фильтрах
+        // (на этом стеке не наблюдается).
+        assertThat(response.getStatusCode().value())
+                .as("oversized web import: advice PRG, not whitelabel-500")
+                .isEqualTo(302);
+        // НЕ редирект на логин (сессия валидна), а на форму импорта
+        assertThat(response.getHeaders().getLocation().getPath())
+                .isEqualTo("/web/entries/import");
+        HttpHeaders followHeaders = new HttpHeaders();
+        followHeaders.add(HttpHeaders.COOKIE, session);
+        ResponseEntity<String> formPage = rest.exchange("/web/entries/import",
+                HttpMethod.GET, new HttpEntity<>(followHeaders), String.class);
+        assertThat(formPage.getBody()).contains("10 МБ");
     }
 
     private static String sessionCookie(ResponseEntity<?> response) {

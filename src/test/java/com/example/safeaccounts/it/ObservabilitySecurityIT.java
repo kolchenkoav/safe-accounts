@@ -47,6 +47,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 @ActiveProfiles("it")
 @Testcontainers
+@org.junit.jupiter.api.extension.ExtendWith(
+        org.springframework.boot.test.system.OutputCaptureExtension.class)
 // Task-09: жестко задаем лимит 10 — application-it.yaml повышает его для
 // других ИТ-тестов; сценарий 429 здесь проверяется на точном лимите.
 @TestPropertySource(properties = {
@@ -309,6 +311,78 @@ class ObservabilitySecurityIT {
                     .findFirst().orElseThrow();
             String details = String.valueOf(exported.getDetailsJson());
             assertThat(details).contains("entryCount").contains("csvSha256").contains("bom");
+        });
+    }
+
+    // -- Фаза 5: web CSV export/import без утечек в логи и аудит ---------------
+
+    @Test
+    void webCsvExportAndImportDoNotLeakSecretsIntoLogsOrAudit(
+            org.springframework.boot.test.system.CapturedOutput captured) throws Exception {
+        String username = "obs-web-user";
+        String entryPassword = "ObsWeb-Marker-Pass-7q6w!";
+
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"%s\",\"password\":\"%s\"}"
+                                .formatted(username, PASSWORD)))
+                .andExpect(status().isCreated());
+        org.springframework.test.web.servlet.MvcResult login = mockMvc.perform(post("/web/login")
+                        .with(org.springframework.security.test.web.servlet.request
+                                .SecurityMockMvcRequestPostProcessors.csrf())
+                        .param("username", username)
+                        .param("password", PASSWORD))
+                .andExpect(status().is3xxRedirection())
+                .andReturn();
+        var session = (org.springframework.mock.web.MockHttpSession)
+                login.getRequest().getSession();
+
+        // Создание записи с маркерным паролем через web-форму
+        mockMvc.perform(post("/web/entries")
+                        .session(session)
+                        .with(org.springframework.security.test.web.servlet.request
+                                .SecurityMockMvcRequestPostProcessors.csrf())
+                        .param("name", "ObsWeb")
+                        .param("site", "https://obs.example.com")
+                        .param("login", "bob")
+                        .param("password", entryPassword)
+                        .param("notes", ""))
+                .andExpect(status().is3xxRedirection());
+
+        // Web-экспорт: тело содержит пароль by design; логи/аудит — нет
+        mockMvc.perform(get("/web/entries/export").session(session))
+                .andExpect(status().isOk());
+
+        // Web-импорт CSV с тем же маркерным паролем
+        byte[] csv = ("name,url,username,password,note\r\n"
+                + "Imported,https://imp.example,bob," + entryPassword + ",n\r\n")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .multipart("/web/entries/import")
+                        .file(new org.springframework.mock.web.MockMultipartFile(
+                                "file", "t.csv", "text/csv", csv))
+                        .param("conflictStrategy", "skip")
+                        .with(org.springframework.security.test.web.servlet.request
+                                .SecurityMockMvcRequestPostProcessors.csrf())
+                        .session(session))
+                .andExpect(status().is3xxRedirection());
+
+        // Захваченный вывод (System.out/err + логгеры): маркерного пароля нет
+        assertThat(captured.toString())
+                .as("console/log output must not contain entry password")
+                .doesNotContain(entryPassword);
+
+        // Аудит: только агрегаты, без пароля/CSV-строк
+        transactionTemplate.executeWithoutResult(tx -> {
+            var events = auditEventRepository.findAllByUser_IdOrderByCreatedAtDesc(
+                    userRepository.findByUsername(username).orElseThrow().getId());
+            for (var event : events) {
+                assertThat(String.valueOf(event.getDetailsJson()))
+                        .as("audit detailsJson for %s must not leak secrets", event.getType())
+                        .doesNotContain(entryPassword)
+                        .doesNotContain("ObsWeb")
+                        .doesNotContain("https://imp.example");
+            }
         });
     }
 }

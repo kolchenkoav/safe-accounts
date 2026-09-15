@@ -6,6 +6,7 @@ import com.example.safeaccounts.service.VaultException;
 import com.example.safeaccounts.service.VaultExportImportService;
 import com.example.safeaccounts.service.VaultService;
 import com.example.safeaccounts.service.csv.ConflictStrategy;
+import com.example.safeaccounts.service.csv.CsvFilenames;
 import com.example.safeaccounts.service.csv.ExportPayload;
 import com.example.safeaccounts.service.csv.ImportReport;
 import com.example.safeaccounts.service.csv.InvalidCsvException;
@@ -69,18 +70,35 @@ public class WebVaultController {
     @GetMapping("/web/entries")
     public String list(@AuthenticationPrincipal AuthUser principal,
                        @RequestParam(defaultValue = "0") int page,
-                       @RequestParam(name = "tag", required = false) UUID tagId,
+                       @RequestParam(name = "tag", required = false) String tag,
                        Model model) {
+        // ?tag=<мусор> не должен давать 400/500 (конвертация UUID): парсим
+        // вручную; невалидный — nil-UUID-сентинел, который ничего не матчит
+        // → пустая страница фильтра (Фаза 5, edge-харднинг).
+        UUID tagId = null;
+        if (tag != null && !tag.isBlank()) {
+            try {
+                tagId = UUID.fromString(tag.trim());
+            } catch (IllegalArgumentException e) {
+                tagId = new UUID(0L, 0L);
+            }
+        }
         Page<VaultService.ListItem> items = vaultService.list(principal.user(), page, 20, tagId);
         model.addAttribute("entries", items.getContent());
-        model.addAttribute("currentPage", page);
+        // Показываемая страница синхронна с клампингом VaultService
+        // (page=999 → последняя существующая, не «1000 / 2»).
+        int currentPage = Math.max(page, 0);
+        if (items.getTotalPages() > 0 && currentPage >= items.getTotalPages()) {
+            currentPage = items.getTotalPages() - 1;
+        }
+        model.addAttribute("currentPage", currentPage);
         model.addAttribute("totalPages", items.getTotalPages());
         model.addAttribute("username", principal.getUsername());
         // Активный фильтр: id — для ссылок пагинации, name — для индикатора «Тег: ... ✕».
         // Чужой/несуществующий tagId — без индикатора, просто пустой список.
-        tagService.findTag(principal.user(), tagId).ifPresent(tag -> {
-            model.addAttribute("tagFilterId", tag.getId());
-            model.addAttribute("tagFilterName", tag.getName());
+        tagService.findTag(principal.user(), tagId).ifPresent(found -> {
+            model.addAttribute("tagFilterId", found.getId());
+            model.addAttribute("tagFilterName", found.getName());
         });
         return "entries";
     }
@@ -251,9 +269,9 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
 
     // -- CSV export/import для пользователя (Фаза 3) ---------------------------
 
-    /** Заголовок-предупреждение — то же значение, что в REST (VaultController). */
-    static final String EXPORT_WARNING_HEADER = "X-Vault-Export-Warning";
-    static final String EXPORT_WARNING_VALUE = "csv-contains-plaintext-passwords";
+    /** Заголовок-предупреждение — единый источник в service/csv (Фаза 5). */
+    static final String EXPORT_WARNING_HEADER = CsvFilenames.EXPORT_WARNING_HEADER;
+    static final String EXPORT_WARNING_VALUE = CsvFilenames.EXPORT_WARNING_VALUE;
 
     /**
      * Экспорт собственного сейфа в CSV: тот же контракт, что REST
@@ -298,6 +316,9 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
     /**
      * Импорт CSV в собственный сейф (PRG, Фаза 4): отчёт уходит во flash,
      * ответ — 302 на GET /report. F5 повторяет только безопасный GET.
+     * PRG/FlashMap-контракт: браузер всегда следует 302 и потребляет flash;
+     * два POST без follow-GET возможны только у не-браузерного клиента — тогда
+     * первый pending-flash покажется при ближайшем GET отчёта (не ошибка).
      * Tomcat буферизует multipart-части во временные файлы work-директории
      * (авто-очистка после запроса); в БД, логи и модель файл не попадает.
      */
@@ -325,8 +346,9 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
                     "Не удалось разобрать CSV: " + e.getMessage());
             return "redirect:/web/entries/import";
         } catch (PayloadTooLargeException e) {
+            // Единая константа (fix A3): размер файла или cumulative-cap.
             redirectAttributes.addFlashAttribute("flashError",
-                    WebErrorController.FILE_TOO_LARGE_MESSAGE);
+                    WebErrorController.IMPORT_LIMIT_EXCEEDED_MESSAGE);
             return "redirect:/web/entries/import";
         } catch (IllegalArgumentException e) {
             redirectAttributes.addFlashAttribute("flashError",

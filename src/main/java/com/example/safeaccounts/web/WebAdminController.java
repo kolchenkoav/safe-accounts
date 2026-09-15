@@ -9,6 +9,7 @@ import com.example.safeaccounts.service.AuthServiceException;
 import com.example.safeaccounts.service.KeyRotationException;
 import com.example.safeaccounts.service.VaultExportImportService;
 import com.example.safeaccounts.service.csv.ConflictStrategy;
+import com.example.safeaccounts.service.csv.CsvFilenames;
 import com.example.safeaccounts.service.csv.ExportPayload;
 import com.example.safeaccounts.service.csv.ImportReport;
 import com.example.safeaccounts.service.csv.InvalidCsvException;
@@ -184,6 +185,11 @@ public class WebAdminController {
      * Экспорт сейфа пользователя администратором: те же заголовки, что у
      * пользовательского экспорта, но имя файла vault-user-<username>-...csv.
      * Аудит VAULT_EXPORTED (actor=admin, target) пишет сервис.
+     * <p>
+     * Отключённый (disabled) target разрешён ОСОЗНАННО (B4, Фаза 5):
+     * легитимный support-сценарий «выгрузить данные заблокированного
+     * сотрудника»; действие требует ROLE_ADMIN и фиксируется в аудите
+     * с actor/target.
      */
     @GetMapping("/web/admin/users/{id}/vault/export")
     public Object exportVault(@AuthenticationPrincipal AuthUser principal,
@@ -241,6 +247,10 @@ public class WebAdminController {
      * Импорт CSV в сейф пользователя (PRG, Фаза 4): отчёт — во flash,
      * ответ — 302 на GET .../report. Аудит VAULT_IMPORTED (actor=admin,
      * target) пишет сервис; файл нигде не сохраняется, CSV в логи не пишется.
+     * Отключённый target разрешён осознанно (B4, см. exportVault).
+     * PRG/FlashMap-контракт: браузер всегда следует 302 и потребляет flash;
+     * два POST без follow-GET возможны только у не-браузерного клиента —
+     * тогда первый pending-flash покажется при ближайшем GET отчёта.
      */
     @PostMapping("/web/admin/users/{id}/vault/import")
     public String importCsv(@AuthenticationPrincipal AuthUser principal,
@@ -272,7 +282,7 @@ public class WebAdminController {
             return importForm;
         } catch (PayloadTooLargeException e) {
             redirectAttributes.addFlashAttribute("flashError",
-                    WebErrorController.FILE_TOO_LARGE_MESSAGE);
+                    WebErrorController.IMPORT_LIMIT_EXCEEDED_MESSAGE);
             return importForm;
         } catch (IllegalArgumentException e) {
             redirectAttributes.addFlashAttribute("flashError",

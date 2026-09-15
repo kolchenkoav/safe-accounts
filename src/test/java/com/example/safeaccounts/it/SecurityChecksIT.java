@@ -371,4 +371,24 @@ new com.example.safeaccounts.api.VaultEntryUpdateRequest(
         mockMvc.perform(get("/api/admin/users").header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isForbidden());
     }
+
+    // -- Фаза 5 (fix): пиннинг-инвариант StrictHttpFirewall --------------------
+
+    /**
+     * Инвариант для rate-limit-матчинга по сырому URI (RateLimitFilter):
+     * дефолтный StrictHttpFirewall блокирует ';' (и '%3b') в пути ДО
+     * FilterChainProxy — «/import;jsessionid=x» не доходит до фильтров как
+     * «иной путь» и не обходит лимитер, а отклоняется как 400. Кастомного
+     * firewall в проекте нет; при его появлении нужна нормализация пути
+     * перед матчингом (backlog).
+     */
+    @Test
+    void semicolonPathParamsAreRejectedByStrictHttpFirewallBeforeFilters() throws Exception {
+        mockMvc.perform(post("/api/auth/login;a=1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/web/entries/import;jsessionid=x"))
+                .andExpect(status().isBadRequest());
+    }
 }

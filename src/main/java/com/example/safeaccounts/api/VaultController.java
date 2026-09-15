@@ -5,6 +5,7 @@ import com.example.safeaccounts.security.AuthUser;
 import com.example.safeaccounts.service.VaultExportImportService;
 import com.example.safeaccounts.service.VaultService;
 import com.example.safeaccounts.service.csv.ExportPayload;
+import com.example.safeaccounts.service.csv.CsvFilenames;
 import com.example.safeaccounts.service.csv.ImportReport;
 import com.example.safeaccounts.service.csv.ConflictStrategy;
 import jakarta.validation.Valid;
@@ -174,8 +175,7 @@ public class VaultController {
         User actor = currentUser(principal);
         ExportPayload payload = exportImportService.export(actor, actor, bom);
 
-        String filename = "vault-" + safeFilenamePart(actor.getUsername())
-                + "-" + compactTimestamp(Instant.now()) + ".csv";
+        String filename = CsvFilenames.forUser(actor.getUsername(), Instant.now());
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.parseMediaType("text/csv; charset=utf-8"));
         headers.set(HttpHeaders.CONTENT_DISPOSITION,
@@ -183,6 +183,8 @@ public class VaultController {
         headers.add(EXPORT_WARNING_HEADER, EXPORT_WARNING_VALUE);
         // Длина тела известна заранее.
         headers.setContentLength(payload.csv().length);
+        // Plaintext-экспорт не должен кэшироваться (паритет с web, Фаза 5).
+        headers.setCacheControl("no-store");
         return new ResponseEntity<>(payload.csv(), headers, HttpStatus.OK);
     }
 
@@ -232,17 +234,12 @@ public class VaultController {
      * Остальные символы заменяются на {@code _}.
      */
     static String safeFilenamePart(String value) {
-        if (value == null || value.isEmpty()) {
-            return "user";
-        }
-        return value.replaceAll("[^A-Za-z0-9._-]", "_");
+        return CsvFilenames.safeFilenamePart(value);
     }
 
     /** ISO-8601 compact (без {@code :} и {@code .}): {@code 20250612T100000Z}. */
     static String compactTimestamp(Instant instant) {
-        return DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'")
-                .withZone(java.time.ZoneOffset.UTC)
-                .format(instant);
+        return CsvFilenames.compactTimestamp(instant);
     }
 
     /** Парсит {@code conflictStrategy} из multipart-параметра. */

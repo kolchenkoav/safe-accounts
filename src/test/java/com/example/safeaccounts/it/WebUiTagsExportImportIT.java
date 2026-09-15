@@ -70,6 +70,8 @@ class WebUiTagsExportImportIT {
     @Autowired
     com.example.safeaccounts.service.UserService userService;
     @Autowired
+    com.example.safeaccounts.service.AdminService adminService;
+    @Autowired
     VaultEntryRepository vaultEntryRepository;
     @Autowired
     TagRepository tagRepository;
@@ -922,5 +924,243 @@ class WebUiTagsExportImportIT {
         mockMvc.perform(get("/web/entries").session(targetSession))
                 .andExpect(content().string(
                         org.hamcrest.Matchers.containsString("Записей пока нет")));
+    }
+
+    // -- Фаза 5: тест-харднинг ------------------------------------------------------
+
+    @Test
+    void adminReportGetWithoutFlashRedirectsToAdminImportForm() throws Exception {
+        registerUser("adm-rep-target");
+        createAdmin("adm-rep-admin");
+        var adminSession = login("adm-rep-admin");
+        UUID targetId = userIdOf("adm-rep-target");
+        mockMvc.perform(get("/web/admin/users/" + targetId + "/vault/import/report")
+                        .session(adminSession))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl(
+                        "/web/admin/users/" + targetId + "/vault/import"));
+    }
+
+    @Test
+    void adminImportUnknownUserShowsFlashAndRedirects() throws Exception {
+        createAdmin("adm-unk2");
+        var adminSession = login("adm-unk2");
+        byte[] content = csv(CSV_HEADER, "X,https://x.example,u,p,n");
+        mockMvc.perform(multipart("/web/admin/users/" + UUID.randomUUID() + "/vault/import")
+                        .file(new org.springframework.mock.web.MockMultipartFile(
+                                "file", "test.csv", "text/csv", content))
+                        .param("conflictStrategy", "skip")
+                        .with(csrf())
+                        .session(adminSession))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/admin/users"))
+                .andExpect(flash().attribute("flashError", "Пользователь не найден"));
+    }
+
+    @Test
+    void adminCanExportAndImportDisabledUserVault() throws Exception {
+        registerUser("adm-disabled");
+        var targetSession = login("adm-disabled");
+        createEntry(targetSession, "Заблокированная-запись");
+        createAdmin("adm-support");
+        var adminSession = login("adm-support");
+        UUID targetId = userIdOf("adm-disabled");
+
+        // Блокируем target через AdminService (аудит USER_DISABLED пишется)
+        var adminEntity = userRepository.findByUsername("adm-support").orElseThrow();
+        adminService.disableUser(targetId, adminEntity);
+
+        // B4: экспорт сейфа отключённого пользователя — легитимный
+        // support-сценарий (ROLE_ADMIN + аудит с actor/target)
+        mockMvc.perform(get("/web/admin/users/" + targetId + "/vault/export")
+                        .session(adminSession))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Заблокированная-запись")));
+
+        // Импорт в его сейф тоже работает (логин target заблокирован —
+        // проверяем через репозиторий)
+        byte[] content = csv(CSV_HEADER, "Импорт-отключ,https://off.example,u1,Pass-111,n1");
+        mockMvc.perform(multipart("/web/admin/users/" + targetId + "/vault/import")
+                        .file(new org.springframework.mock.web.MockMultipartFile(
+                                "file", "test.csv", "text/csv", content))
+                        .param("conflictStrategy", "skip")
+                        .with(csrf())
+                        .session(adminSession))
+                .andExpect(status().is3xxRedirection());
+        long count = transactionTemplate.execute(tx -> vaultEntryRepository.count());
+        assertThat(count).isEqualTo(2);
+    }
+
+    @Test
+    void renameTagToExistingNameShowsFlashButCaseOnlyRenameSucceeds() throws Exception {
+        registerUser("renameclash");
+        var session = login("renameclash");
+        createTag(session, "personal");
+        createTag(session, "work");
+        // firstTagId — по nameLower: personal первый
+        String tagId = firstTagId(session);
+
+        // Переименование в занятое имя (другой регистр) → flash-ошибка
+        mockMvc.perform(post("/web/tags/" + tagId + "/rename")
+                        .session(session).with(csrf()).param("name", "WORK"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(flash().attribute("flashError", "Тег уже существует"));
+
+        // Case-only переименование того же тега — успех (не конфликт сам с собой)
+        mockMvc.perform(post("/web/tags/" + tagId + "/rename")
+                        .session(session).with(csrf()).param("name", "Personal"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(flash().attribute("flashMessage", "Тег переименован"));
+        mockMvc.perform(get("/web/tags").session(session))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Personal")));
+        assertThat(userTagCount("renameclash")).isEqualTo(2);
+    }
+
+    @Test
+    void importCsvWithExtraTagsColumnIgnoresItSilently() throws Exception {
+        registerUser("tagcol");
+        var session = login("tagcol");
+        // 6-я колонка tags — лишние колонки после 5-й тихо отбрасываются
+        byte[] content = csv("name,url,username,password,note,tags",
+                "Тегоколонка,https://tags.example,u1,Pass-111,n1,sometag");
+        String html = importReportHtml(session, content, "skip", false, false);
+        assertThat(html).contains("data-metric=\"created\">1<");
+        // Теги из CSV не создаются
+        assertThat(userTagCount("tagcol")).isZero();
+    }
+
+    @Test
+    void importRejectsWhenCumulativeCapExceeded() throws Exception {
+        registerUser("capuser");
+        var session = login("capuser");
+        createEntry(session, "Существующая");
+        // 1 существующая + 10000 строк = 10001 > MAX_EXPORT_ROWS (10000):
+        // консервативный пре-чек отклоняет весь импорт ДО обработки
+        StringBuilder rows = new StringBuilder(CSV_HEADER).append("\r\n");
+        for (int i = 0; i < 10_000; i++) {
+            rows.append("Кап-").append(i).append(",https://cap.example,u")
+                    .append(i).append(",Pass-").append(i).append(",\r\n");
+        }
+        MvcResult post = performImport(session,
+                rows.toString().getBytes(StandardCharsets.UTF_8), "skip", false, false);
+        assertThat(post.getResponse().getStatus()).isEqualTo(302);
+        assertThat(post.getResponse().getHeader("Location"))
+                .isEqualTo("/web/entries/import");
+        assertThat(String.valueOf(post.getFlashMap().get("flashError")))
+                .contains("10 МБ");
+        long count = transactionTemplate.execute(tx -> vaultEntryRepository.count());
+        assertThat(count).isEqualTo(1);
+    }
+
+    @Test
+    void tagFilterWithGarbageShowsEmptyPageNot500() throws Exception {
+        registerUser("taggarbage");
+        var session = login("taggarbage");
+        createEntry(session, "Обычная-запись");
+        mockMvc.perform(get("/web/entries")
+                        .param("tag", "%%%мусор%%%").session(session))
+                .andExpect(status().isOk())
+                .andExpect(view().name("entries"))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Записей пока нет")));
+    }
+
+    @Test
+    void tagFilterWithUnknownUuidShowsEmptyPage() throws Exception {
+        registerUser("tagunknown");
+        var session = login("tagunknown");
+        createEntry(session, "Обычная-запись");
+        mockMvc.perform(get("/web/entries")
+                        .param("tag", UUID.randomUUID().toString()).session(session))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Записей пока нет")));
+    }
+
+    @Test
+    void pageBeyondRangeClampsToLastPage() throws Exception {
+        registerUser("paginator");
+        var session = login("paginator");
+        for (int i = 0; i <= 20; i++) {
+            createEntry(session, "Пагинация-" + i);
+        }
+        // 21 запись / 20 на страницу → 2 страницы; page=999 → кламп к последней
+        mockMvc.perform(get("/web/entries")
+                        .param("page", "999").session(session))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Пагинация-20")))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("2 / 2")));
+    }
+
+    // -- Фаза 5 (fix B12): E2E web-smoke round-trip -------------------------
+
+    @Test
+    void fullRoundTripExportDeleteImportReveal() throws Exception {
+        registerUser("roundtrip");
+        var session = login("roundtrip");
+        String marker = "RoundTrip-Marker-9k7p!";
+
+        // Создание записи с уникальным паролем-маркером
+        mockMvc.perform(post("/web/entries")
+                        .session(session)
+                        .with(csrf())
+                        .param("name", "Раундтрип")
+                        .param("site", "https://roundtrip.example")
+                        .param("login", "rt-user")
+                        .param("password", marker)
+                        .param("notes", "rt-note"))
+                .andExpect(status().is3xxRedirection());
+        MvcResult list = mockMvc.perform(get("/web/entries").session(session))
+                .andExpect(status().isOk())
+                .andReturn();
+        java.util.regex.Matcher m = UUID_PATH.matcher(html(list));
+        assertThat(m.find()).as("round-trip entry link").isTrue();
+        String entryId = m.group(1);
+
+        // Экспорт (без BOM)
+        byte[] csvBytes = mockMvc.perform(get("/web/entries/export").session(session))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray();
+
+        // Удаление записи
+        mockMvc.perform(post("/web/entries/" + entryId + "/delete")
+                        .session(session).with(csrf()))
+                .andExpect(status().is3xxRedirection());
+        mockMvc.perform(get("/web/entries").session(session))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Записей пока нет")));
+
+        // Импорт того же CSV → создана 1 запись (PRG + отчёт)
+        mockMvc.perform(multipart("/web/entries/import")
+                        .file(new org.springframework.mock.web.MockMultipartFile(
+                                "file", "roundtrip.csv", "text/csv", csvBytes))
+                        .param("conflictStrategy", "skip")
+                        .with(csrf())
+                        .session(session))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/entries/import/report"));
+        mockMvc.perform(get("/web/entries/import/report").session(session))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("data-metric=\"created\">1<")));
+
+        // Новый id записи
+        MvcResult list2 = mockMvc.perform(get("/web/entries").session(session))
+                .andExpect(status().isOk())
+                .andReturn();
+        java.util.regex.Matcher m2 = UUID_PATH.matcher(html(list2));
+        assertThat(m2.find()).as("re-imported entry link").isTrue();
+        String newId = m2.group(1);
+
+        // Reveal: исходный пароль-маркер пережил экспорт → импорт
+        mockMvc.perform(post("/web/entries/" + newId + "/reveal")
+                        .session(session).with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString(marker)));
     }
 }

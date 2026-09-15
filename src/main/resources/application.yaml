@@ -41,8 +41,9 @@ spring:
       # MaxUploadSizeExceededException ловится ApiExceptionHandler → 413
       # (раньше REST /api/vault/import >11MB отдавал 500). Фильтров,
       # зависящих от раннего multipart-парсинга, в проекте нет (безопасно).
-      # Web-цепочка >11MB: фактический исход — 302 (advice при падении
-      # в Spring-резолвере; см. OversizeUploadIT, допускает 302|413).
+      # Web-цепочка >11MB: фактический исход — строго 302 (advice при
+      # падении в Spring-резолвере; см. OversizeUploadIT — ассерт ужесточён
+      # до 302; 413-ветка — страховка error-page).
       # Tomcat error-page (ErrorPageConfig → /web/error/file-too-large) —
       # страховка для случая, когда Spring-тип MaxUploadSizeExceededException
       # не перехвачен advice; нативные исключения Tomcat из фильтров этим

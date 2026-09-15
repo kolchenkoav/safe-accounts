@@ -64,8 +64,12 @@ public class SecurityConfig {
                         .securityContextRepository(new DelegatingSecurityContextRepository(
                                 new HttpSessionSecurityContextRepository(),
                                 new RequestAttributeSecurityContextRepository())))
-                // Rate limiting по IP и для веб-логина (Task-09/Task-11)
-                .addFilterBefore(rateLimitFilter, UsernamePasswordAuthenticationFilter.class)
+                // Rate limiting по IP и для веб-логина (Task-09/Task-11);
+                // ДО CsrfFilter: POST без CSRF-токена должен считаться
+                // лимитером (иначе не-браузерные клиенты не попадают в бакет,
+                // Фаза 5 web-импорт).
+                .addFilterBefore(rateLimitFilter,
+                        org.springframework.security.web.csrf.CsrfFilter.class)
                 .authorizeHttpRequests(auth -> auth
                         // Статика веб-интерфейса (стили, скрипты) — без аутентификации
                         .requestMatchers("/web/style.css", "/web/theme.js", "/web/main.js").permitAll()

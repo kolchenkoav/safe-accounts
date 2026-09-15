@@ -26,6 +26,15 @@ public class WebErrorController {
     public static final String FILE_TOO_LARGE_MESSAGE =
             "Файл слишком большой (лимит 10 МБ) — уменьшите файл и повторите";
 
+    /**
+     * Единый текст превышения лимитов ИМПОРТА (fix-волна A3): размер файла
+     * (MAX_CSV_BYTES = 10 МБ) или cumulative-cap (10 000 записей).
+     * Чисто-размерная FILE_TOO_LARGE_MESSAGE остаётся для error-page/advice.
+     */
+    public static final String IMPORT_LIMIT_EXCEEDED_MESSAGE =
+            "Файл слишком большой (лимит 10 МБ) или превышен суммарный лимит "
+                    + "записей (10 000) — уменьшите файл или очистите записи и повторите";
+
     @GetMapping("/web/error/file-too-large")
     public String fileTooLarge(HttpServletResponse response, Model model,
                                jakarta.servlet.http.HttpServletRequest request) {

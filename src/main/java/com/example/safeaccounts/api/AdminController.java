@@ -8,6 +8,7 @@ import com.example.safeaccounts.service.AuthServiceException;
 import com.example.safeaccounts.service.KeyRotationException;
 import com.example.safeaccounts.service.VaultExportImportService;
 import com.example.safeaccounts.service.csv.ConflictStrategy;
+import com.example.safeaccounts.service.csv.CsvFilenames;
 import com.example.safeaccounts.service.csv.ExportPayload;
 import com.example.safeaccounts.service.csv.ImportReport;
 import jakarta.validation.Valid;
@@ -178,14 +179,15 @@ public class AdminController {
 
         ExportPayload payload = exportImportService.export(actor, target, bom);
 
-        String filename = "vault-user-" + VaultController.safeFilenamePart(target.getUsername())
-                + "-" + VaultController.compactTimestamp(Instant.now()) + ".csv";
+        String filename = CsvFilenames.forTargetUser(target.getUsername(), Instant.now());
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.parseMediaType("text/csv; charset=utf-8"));
         headers.set(HttpHeaders.CONTENT_DISPOSITION,
                 "attachment; filename=\"" + filename + "\"");
         headers.add(VaultController.EXPORT_WARNING_HEADER, VaultController.EXPORT_WARNING_VALUE);
         headers.setContentLength(payload.csv().length);
+        // Plaintext-экспорт не должен кэшироваться (паритет с web, Фаза 5).
+        headers.setCacheControl("no-store");
         return new ResponseEntity<>(payload.csv(), headers, HttpStatus.OK);
     }
 
