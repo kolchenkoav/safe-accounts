@@ -10,6 +10,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
+import org.springframework.validation.BindingResult;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -76,8 +77,13 @@ model.addAttribute("entryForm", new EntryForm("", "", "", "", ""));
     @PostMapping("/web/entries")
     public String create(@AuthenticationPrincipal AuthUser principal,
                          @Valid @ModelAttribute("entryForm") EntryForm form,
+                         BindingResult bindingResult,
                          RedirectAttributes redirectAttributes) {
-vaultService.create(principal.user(), form.name(), form.site(), form.login(),
+        if (bindingResult.hasErrors()) {
+            // Повторный рендер формы с ошибками (th:errors), а не 500/400.
+            return "entry-form";
+        }
+        vaultService.create(principal.user(), form.name(), form.site(), form.login(),
                 form.password(), emptyToNull(form.notes()));
         redirectAttributes.addFlashAttribute("flashMessage", "Запись создана");
         return "redirect:/web/entries";
@@ -144,14 +150,21 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
     public String update(@AuthenticationPrincipal AuthUser principal,
                          @PathVariable UUID id,
                          @Valid @ModelAttribute("entryForm") EntryForm form,
+                         BindingResult bindingResult,
                          RedirectAttributes redirectAttributes,
                          Model model) {
+        if (bindingResult.hasErrors()) {
+            // Повторный рендер формы с ошибками; entryId нужен шаблону.
+            model.addAttribute("entryId", id);
+            return "entry-form-edit";
+        }
         try {
-vaultService.update(principal.user(), id, form.name(), form.site(), form.login(),
+            vaultService.update(principal.user(), id, form.name(), form.site(), form.login(),
                     form.password(), emptyToNull(form.notes()));
             redirectAttributes.addFlashAttribute("flashMessage", "Запись обновлена");
             return "redirect:/web/entries";
         } catch (VaultException e) {
+            model.addAttribute("entryId", id);
             model.addAttribute("errorMessage", "Не удалось обновить запись");
             return "entry-form-edit";
         }

@@ -30,6 +30,7 @@
             <table th:if="${!entries.isEmpty()}">
                 <thead>
                     <tr>
+                        <th>Название</th>
                         <th>Сайт</th>
                         <th>Логин</th>
                         <th>Обновлена</th>
@@ -39,6 +40,7 @@
                 <tbody>
                     <!-- Пароль и примечание в списке НЕ отображаются (Task-11) -->
                     <tr th:each="entry : ${entries}">
+                        <td th:text="${entry.name}"></td>
                         <td th:text="${entry.site}"></td>
                         <td th:text="${entry.login}"></td>
                         <td

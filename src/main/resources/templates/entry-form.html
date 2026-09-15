@@ -14,6 +14,12 @@
 
     <!-- Пароль передается только в теле POST-запроса; в логи и шаблоны не попадает. -->
     <form th:action="@{/web/entries}" th:object="${entryForm}" method="post">
+        <!-- Сводная ошибка валидации: все поля формы, включая name -->
+        <div class="alert alert-error" th:if="${#fields.hasAnyErrors()}" th:errors="*{*}"></div>
+
+        <label for="name">Название</label>
+        <input type="text" id="name" th:field="*{name}" required maxlength="256" autocomplete="off">
+
         <label for="site">Сайт</label>
         <input type="text" id="site" th:field="*{site}" required maxlength="2048">
 

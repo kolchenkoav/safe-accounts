@@ -213,11 +213,12 @@ class WebUiIT {
 
     // -- 2. CRUD записей через веб ----------------------------------------------
 
-    private MvcResult createEntry(MockHttpSessionHolder session, String site,
+    private MvcResult createEntry(MockHttpSessionHolder session, String name, String site,
                                   String login, String password) throws Exception {
         return mockMvc.perform(post("/web/entries")
                         .session(session.session())
                         .with(csrf())
+                        .param("name", name)
                         .param("site", site)
                         .param("login", login)
                         .param("password", password)
@@ -265,12 +266,13 @@ class WebUiIT {
         registerUser("webcrud");
         MockHttpSessionHolder holder = login("webcrud");
 
-        // CREATE
-        createEntry(holder, "https://example.com", "alice", ENTRY_PASSWORD);
+        // CREATE (поле name обязательно — Фаза 1)
+        createEntry(holder, "Моя запись", "https://example.com", "alice", ENTRY_PASSWORD);
 
-        // LIST: пароль в списке отсутствует
+        // LIST: name виден в списке, пароль в списке отсутствует
         MvcResult list = mockMvc.perform(get("/web/entries").session(holder.session()))
                 .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Моя запись")))
                 .andExpect(content().string(org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString(ENTRY_PASSWORD))))
                 .andReturn();
@@ -281,6 +283,7 @@ class WebUiIT {
         MvcResult view = mockMvc.perform(get("/web/entries/" + id).session(holder.session()))
                 .andExpect(status().isOk())
                 .andExpect(view().name("entry-view"))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Моя запись")))
                 .andExpect(content().string(org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString(ENTRY_PASSWORD))))
                 .andReturn();
@@ -292,18 +295,20 @@ class WebUiIT {
                 .andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString(ENTRY_PASSWORD)));
 
-        // EDIT: старый пароль не подставляется в форму
+        // EDIT: форма предзаполнена текущим name, старый пароль не подставляется
         MvcResult editForm = mockMvc.perform(get("/web/entries/" + id + "/edit")
                         .session(holder.session()))
                 .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Моя запись")))
                 .andExpect(content().string(org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString(ENTRY_PASSWORD))))
                 .andReturn();
 
-        // UPDATE
+        // UPDATE: меняется и name
         mockMvc.perform(post("/web/entries/" + id + "/edit")
                         .session(holder.session())
                         .with(csrf())
+                        .param("name", "Переименованная запись")
                         .param("site", "https://example.com")
                         .param("login", "alice")
                         .param("password", "New-Pass-456!")
@@ -311,10 +316,11 @@ class WebUiIT {
                 .andExpect(status().is3xxRedirection())
                 .andExpect(redirectedUrl("/web/entries"));
 
-        // Пароль после обновления — новый
+        // После обновления на карточке — новое name и новый пароль, старого пароля нет
         mockMvc.perform(post("/web/entries/" + id + "/reveal")
                         .session(holder.session())
                         .with(csrf()))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Переименованная запись")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("New-Pass-456!")))
                 .andExpect(content().string(org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString(ENTRY_PASSWORD))));
@@ -330,6 +336,33 @@ class WebUiIT {
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("Записей пока нет")));
     }
 
+    /**
+     * Поле «Название» обязательно (Фаза 1): сабмит без name не создает запись
+     * и не падает 500 — форма перерисовывается с ошибкой валидации.
+     */
+    @Test
+    void createWithoutNameShowsValidationErrorAndDoesNotCreateEntry() throws Exception {
+        registerUser("webnoname");
+        MockHttpSessionHolder holder = login("webnoname");
+
+        // POST без name: не 500, форма перерисовывается с ошибкой валидации.
+        mockMvc.perform(post("/web/entries")
+                        .session(holder.session())
+                        .with(csrf())
+                        .param("site", "https://example.com")
+                        .param("login", "alice")
+                        .param("password", ENTRY_PASSWORD)
+                        .param("notes", "note-value"))
+                .andExpect(status().isOk())
+                .andExpect(view().name("entry-form"))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("alert-error")));
+
+        // Запись не создана.
+        mockMvc.perform(get("/web/entries").session(holder.session()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Записей пока нет")));
+    }
+
     // -- 3. Чужие записи недоступны ----------------------------------------------
 
     @Test
@@ -338,7 +371,7 @@ class WebUiIT {
         registerUser("webintruder");
 
         MockHttpSessionHolder owner = login("webowner");
-        createEntry(owner, "https://secret.example", "owner", ENTRY_PASSWORD);
+        createEntry(owner, "Чужая запись", "https://secret.example", "owner", ENTRY_PASSWORD);
         String id = firstEntryId(owner);
 
         // Чужой пользователь не видит запись ни в списке...
@@ -427,8 +460,8 @@ class WebUiIT {
         mockMvc.perform(post("/api/vault")
                         .header("Authorization", "Bearer " + token)
                         .contentType("application/json")
-                        .content("{\"site\":\"https://api.example\",\"login\":\"api\","
-                                + "\"password\":\"%s\",\"notes\":null}".formatted(ENTRY_PASSWORD)))
+                    .content("{\"name\":\"API запись\",\"site\":\"https://api.example\",\"login\":\"api\","
+                            + "\"password\":\"%s\",\"notes\":null}".formatted(ENTRY_PASSWORD)))
                 .andExpect(status().isCreated());
 
         mockMvc.perform(get("/api/vault")

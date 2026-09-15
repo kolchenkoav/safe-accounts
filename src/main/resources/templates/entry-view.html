@@ -10,9 +10,13 @@
 </nav>
 
 <main class="card">
-    <h1 th:text="${entry.site}">Сайт</h1>
+    <!-- Заголовок — name записи (fallback на site — на случай пустого name) -->
+    <h1 th:text="${entry.name != null && !entry.name.isBlank() ? entry.name : entry.site}">Название</h1>
 
     <dl>
+        <dt>Сайт</dt>
+        <dd th:text="${entry.site}"></dd>
+
         <dt>Логин</dt>
         <dd th:text="${entry.login}"></dd>
 
