@@ -55,6 +55,12 @@ public static final String SECRET_REVEALED = "SECRET_REVEALED";
     public static final String VAULT_EXPORTED = "VAULT_EXPORTED";
     public static final String VAULT_IMPORTED = "VAULT_IMPORTED";
 
+    /** Управление тегами (Task-08, Фаза 5). Имена тегов — не секрет. */
+    public static final String TAG_CREATED = "TAG_CREATED";
+    public static final String TAG_RENAMED = "TAG_RENAMED";
+    public static final String TAG_DELETED = "TAG_DELETED";
+    public static final String ENTRY_TAGS_REPLACED = "ENTRY_TAGS_REPLACED";
+
     /** Административные события (Task-06). В details — только имена/счетчики/key id. */
     public static final String USER_CREATED_BY_ADMIN = "USER_CREATED_BY_ADMIN";
     public static final String USER_RESET_PASSWORD = "USER_RESET_PASSWORD";

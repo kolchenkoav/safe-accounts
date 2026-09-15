@@ -121,7 +121,7 @@ public class VaultExportImportService {
      * @throws PayloadTooLargeException если у пользователя больше {@value #MAX_EXPORT_ROWS} записей
      * @throws AccessDeniedException    если actor не имеет права на target
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public ExportPayload export(User actor, User target, boolean includeBom) {
         requireOwnerOrAdmin(actor, target);
 

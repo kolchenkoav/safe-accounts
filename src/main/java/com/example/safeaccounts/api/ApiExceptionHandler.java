@@ -2,7 +2,11 @@ package com.example.safeaccounts.api;
 
 import com.example.safeaccounts.security.SensitiveDataMasker;
 import com.example.safeaccounts.service.AuthServiceException;
+import com.example.safeaccounts.service.TagAlreadyExistsException;
+import com.example.safeaccounts.service.TagStillReferencedException;
 import com.example.safeaccounts.service.VaultException;
+import com.example.safeaccounts.service.csv.InvalidCsvException;
+import com.example.safeaccounts.service.csv.PayloadTooLargeException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -12,6 +16,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 /**
  * Единая обработка ошибок API в формате RFC 7807 ProblemDetail.
@@ -96,6 +101,57 @@ public class ApiExceptionHandler {
         HttpStatus status = HttpStatus.METHOD_NOT_ALLOWED;
         return ResponseEntity.status(status)
                 .body(ProblemDetail.forStatusAndDetail(status, "Method not allowed"));
+    }
+
+    /**
+     * Превышение лимита размера CSV (10 МБ) или количества строк экспорта (10 000)
+     * — маппится в 413 Payload Too Large (RFC 7807).
+     */
+    @ExceptionHandler(PayloadTooLargeException.class)
+    public ResponseEntity<ProblemDetail> handlePayloadTooLarge(PayloadTooLargeException e) {
+        HttpStatus status = HttpStatus.PAYLOAD_TOO_LARGE;
+        return ResponseEntity.status(status)
+                .body(ProblemDetail.forStatusAndDetail(status,
+                        SensitiveDataMasker.mask(neutralize(e.getMessage()))));
+    }
+
+    /**
+     * Превышение multipart-лимита Spring (max-file-size / max-request-size) —
+     * тоже 413 Payload Too Large (RFC 7807).
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ProblemDetail> handleMaxUpload(MaxUploadSizeExceededException e) {
+        HttpStatus status = HttpStatus.PAYLOAD_TOO_LARGE;
+        return ResponseEntity.status(status)
+                .body(ProblemDetail.forStatusAndDetail(status, "Payload too large"));
+    }
+
+    /**
+     * Невалидный CSV (синтаксис, отсутствие обязательной колонки,
+     * нераспарсиваемая UTF-8) — 422 Unprocessable Entity (RFC 7807).
+     */
+    @ExceptionHandler(InvalidCsvException.class)
+    public ResponseEntity<ProblemDetail> handleInvalidCsv(InvalidCsvException e) {
+        HttpStatus status = HttpStatus.UNPROCESSABLE_ENTITY;
+        return ResponseEntity.status(status)
+                .body(ProblemDetail.forStatusAndDetail(status,
+                        SensitiveDataMasker.mask(neutralize(e.getMessage()))));
+    }
+
+    /** Тег с таким именем уже существует у пользователя — 409 Conflict (RFC 7807). */
+    @ExceptionHandler(TagAlreadyExistsException.class)
+    public ResponseEntity<ProblemDetail> handleTagConflict(TagAlreadyExistsException e) {
+        HttpStatus status = HttpStatus.CONFLICT;
+        return ResponseEntity.status(status)
+                .body(ProblemDetail.forStatusAndDetail(status, neutralize(e.getMessage())));
+    }
+
+    /** Тег всё ещё привязан хотя бы к одной записи — 409 Conflict (RFC 7807). */
+    @ExceptionHandler(TagStillReferencedException.class)
+    public ResponseEntity<ProblemDetail> handleTagReferenced(TagStillReferencedException e) {
+        HttpStatus status = HttpStatus.CONFLICT;
+        return ResponseEntity.status(status)
+                .body(ProblemDetail.forStatusAndDetail(status, neutralize(e.getMessage())));
     }
 
     @ExceptionHandler(Exception.class)

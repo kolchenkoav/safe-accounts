@@ -2,10 +2,16 @@ package com.example.safeaccounts.api;
 
 import com.example.safeaccounts.domain.User;
 import com.example.safeaccounts.security.AuthUser;
+import com.example.safeaccounts.service.VaultExportImportService;
 import com.example.safeaccounts.service.VaultService;
+import com.example.safeaccounts.service.csv.ExportPayload;
+import com.example.safeaccounts.service.csv.ImportReport;
+import com.example.safeaccounts.service.csv.ConflictStrategy;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -16,14 +22,20 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.UUID;
 
 /**
- * CRUD API записей сейфа (Task-05). Контроллер тонкий:
- * вся бизнес-логика и шифрование — в {@link VaultService}.
+ * CRUD API записей сейфа (Task-05), экспорт/импорт (Task-07/08, Фаза 5).
+ * Контроллер тонкий: вся бизнес-логика и шифрование — в {@link VaultService}
+ * и {@link VaultExportImportService}.
  * <p>
  * Безопасность: пароли в списках не возвращаются; расшифрованный пароль
  * отдается только при явном {@code ?reveal=true} и только владельцу.
@@ -33,10 +45,22 @@ import java.util.UUID;
 @RequestMapping("/api/vault")
 public class VaultController {
 
-    private final VaultService vaultService;
+    /** Заголовок-предупреждение о plaintext-паролях в CSV (план, раздел 5 п.7). */
+    static final String EXPORT_WARNING_HEADER = "X-Vault-Export-Warning";
 
-    public VaultController(VaultService vaultService) {
+    /** Значение заголовка (фиксированное — для интеграторов и мониторинга). */
+    static final String EXPORT_WARNING_VALUE = "csv-contains-plaintext-passwords";
+
+    /** Имя multipart-поля для CSV-файла. */
+    static final String IMPORT_FILE_PART = "file";
+
+    private final VaultService vaultService;
+    private final VaultExportImportService exportImportService;
+
+    public VaultController(VaultService vaultService,
+                           VaultExportImportService exportImportService) {
         this.vaultService = vaultService;
+        this.exportImportService = exportImportService;
     }
 
     /** Список записей текущего пользователя (без паролей и notes). */
@@ -134,6 +158,59 @@ public class VaultController {
         return ResponseEntity.noContent().build();
     }
 
+    // -- export / import (Task-07 / Task-08, Фаза 5) -------------------------
+
+    /**
+     * Экспорт собственного сейфа в CSV (Google Chrome Password Manager формат).
+     * <p>
+     * Заголовок {@code X-Vault-Export-Warning: csv-contains-plaintext-passwords}
+     * обязателен (план 5 п.7). Имя файла — {@code vault-<username>-<ISO8601>.csv},
+     * без двоеточий и точек в timestamp (для совместимости с Windows-клиентами).
+     */
+    @GetMapping("/export")
+    public ResponseEntity<byte[]> export(
+            @AuthenticationPrincipal AuthUser principal,
+            @RequestParam(defaultValue = "false") boolean bom) {
+        User actor = currentUser(principal);
+        ExportPayload payload = exportImportService.export(actor, actor, bom);
+
+        String filename = "vault-" + safeFilenamePart(actor.getUsername())
+                + "-" + compactTimestamp(Instant.now()) + ".csv";
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType("text/csv; charset=utf-8"));
+        headers.set(HttpHeaders.CONTENT_DISPOSITION,
+                "attachment; filename=\"" + filename + "\"");
+        headers.add(EXPORT_WARNING_HEADER, EXPORT_WARNING_VALUE);
+        // Длина тела известна заранее.
+        headers.setContentLength(payload.csv().length);
+        return new ResponseEntity<>(payload.csv(), headers, HttpStatus.OK);
+    }
+
+    /**
+     * Импорт CSV в собственный сейф.
+     * <p>
+     * multipart/form-data: {@code file} (CSV, обязательно), {@code conflictStrategy}
+     * ({@code skip|upsert}, default {@code skip}).
+     * Query: {@code ?dryRun=true|false}, {@code ?failFast=true|false}.
+     */
+    @PostMapping(path = "/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ImportReport> importCsv(
+            @AuthenticationPrincipal AuthUser principal,
+            @RequestPart(IMPORT_FILE_PART) MultipartFile file,
+            @RequestParam(defaultValue = "skip") String conflictStrategy,
+            @RequestParam(defaultValue = "false") boolean dryRun,
+            @RequestParam(defaultValue = "false") boolean failFast) throws java.io.IOException {
+        User actor = currentUser(principal);
+        ConflictStrategy strategy = parseConflictStrategy(conflictStrategy);
+        if (file == null || file.isEmpty()) {
+            throw new com.example.safeaccounts.service.csv.InvalidCsvException("CSV file is empty");
+        }
+        byte[] csvBytes = file.getBytes();
+        ImportReport report = exportImportService.importFromCsv(
+                actor, actor, csvBytes, strategy, dryRun, failFast);
+        return ResponseEntity.ok(report);
+    }
+
     /** Пользователь из Bearer-principal (User — LAZY, данные уже зафиксированы). */
     private static User currentUser(AuthUser principal) {
         return principal.user();
@@ -146,5 +223,39 @@ public class VaultController {
             long totalElements,
             int totalPages,
             List<T> content) {
+    }
+
+    // -- export/import helpers ------------------------------------------------
+
+    /**
+     * Нейтральная часть имени файла из username: только [A-Za-z0-9._-].
+     * Остальные символы заменяются на {@code _}.
+     */
+    static String safeFilenamePart(String value) {
+        if (value == null || value.isEmpty()) {
+            return "user";
+        }
+        return value.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    /** ISO-8601 compact (без {@code :} и {@code .}): {@code 20250612T100000Z}. */
+    static String compactTimestamp(Instant instant) {
+        return DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'")
+                .withZone(java.time.ZoneOffset.UTC)
+                .format(instant);
+    }
+
+    /** Парсит {@code conflictStrategy} из multipart-параметра. */
+    static ConflictStrategy parseConflictStrategy(String value) {
+        if (value == null || value.isBlank()) {
+            return ConflictStrategy.SKIP;
+        }
+        String normalized = value.trim().toLowerCase(java.util.Locale.ROOT);
+        return switch (normalized) {
+            case "skip" -> ConflictStrategy.SKIP;
+            case "upsert" -> ConflictStrategy.UPSERT;
+            default -> throw new IllegalArgumentException(
+                    "conflictStrategy must be 'skip' or 'upsert', got: " + value);
+        };
     }
 }

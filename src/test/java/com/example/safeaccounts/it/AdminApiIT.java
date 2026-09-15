@@ -16,6 +16,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -29,7 +30,9 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -435,5 +438,131 @@ private UUID createEntry(String token, String name, String site, String login,
                 .andReturn();
         return UUID.fromString(
                 objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asText());
+    }
+
+    // -- export / import (Task-07 / Task-08, Фаза 5) ------------------------
+
+    @Test
+    void adminCanExportAnotherUsersVault() throws Exception {
+        String adminToken = loginAdmin();
+        String userToken = registerAndLogin("admin-export-user");
+        UUID userId = userId("admin-export-user");
+        createEntry(userToken, "UserEntry", "https://user.example.com",
+                "alice", "User-Entry-Pass!", "user-note");
+
+        MvcResult result = mockMvc.perform(get("/api/admin/users/{id}/vault/export", userId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-Vault-Export-Warning",
+                        "csv-contains-plaintext-passwords"))
+                .andExpect(header().string("Content-Type",
+                        org.hamcrest.Matchers.startsWith("text/csv")))
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("vault-user-admin-export-user")))
+                .andReturn();
+
+        String csv = new String(result.getResponse().getContentAsByteArray(),
+                java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(csv).startsWith("name,url,username,password,note\r\n");
+        assertThat(csv).contains("UserEntry").contains("https://user.example.com")
+                .contains("alice").contains("User-Entry-Pass!");
+        // Аудит VAULT_EXPORTED пишется, actor=admin, target=user.
+        // Event записан с user=actor (bootstrap-admin), а не с target.
+        UUID adminId = userId("bootstrap-admin");
+        transactionTemplate.executeWithoutResult(status -> {
+            var events = auditEventRepository.findAllByUser_IdOrderByCreatedAtDesc(adminId);
+            var exported = events.stream()
+                    .filter(e -> "VAULT_EXPORTED".equals(e.getType()))
+                    .findFirst().orElseThrow();
+            String blob = String.valueOf(exported.getDetailsJson());
+            assertThat(blob).doesNotContain("User-Entry-Pass!").doesNotContain("user-note");
+        });
+    }
+
+    @Test
+    void adminExportMissingUserReturns404() throws Exception {
+        String adminToken = loginAdmin();
+        UUID missing = UUID.randomUUID();
+
+        mockMvc.perform(get("/api/admin/users/{id}/vault/export", missing)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404));
+    }
+
+    @Test
+    void nonAdminCannotAccessAdminExport() throws Exception {
+        String userToken = registerAndLogin("plain-export-user");
+        UUID userId = userId("plain-export-user");
+        mockMvc.perform(get("/api/admin/users/{id}/vault/export", userId)
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void unauthenticatedCannotAccessAdminExport() throws Exception {
+        UUID someId = UUID.randomUUID();
+        mockMvc.perform(get("/api/admin/users/{id}/vault/export", someId))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void adminCanImportIntoAnotherUsersVault() throws Exception {
+        String adminToken = loginAdmin();
+        String userToken = registerAndLogin("admin-import-user");
+        UUID userId = userId("admin-import-user");
+
+        String csv = "name,url,username,password,note\r\n"
+                + "ImportedByAdmin,https://ia.example.com,alice,Admin-Imp-Pass!,n\r\n";
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "import.csv", "text/csv",
+                csv.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+        mockMvc.perform(multipart("/api/admin/users/{id}/vault/import", userId)
+                        .file(file)
+                        .param("conflictStrategy", "skip")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.created").value(1));
+
+        // Запись появилась в сейфе целевого пользователя
+        long count = transactionTemplate.execute(s ->
+                vaultEntryRepository.findAllByUser_IdOrderByCreatedAtAsc(userId).size());
+        assertThat(count).isEqualTo(1);
+
+        // Владелец видит свою запись
+        long ownerCount = transactionTemplate.execute(s ->
+                vaultEntryRepository.findAllByUser_IdOrderByCreatedAtAsc(userId).size());
+        assertThat(ownerCount).isEqualTo(1);
+    }
+
+    @Test
+    void adminImportMissingUserReturns404() throws Exception {
+        String adminToken = loginAdmin();
+        UUID missing = UUID.randomUUID();
+        String csv = "name,url,username,password,note\r\nG,u,l,p,n\r\n";
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "import.csv", "text/csv",
+                csv.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+        mockMvc.perform(multipart("/api/admin/users/{id}/vault/import", missing)
+                        .file(file)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void nonAdminCannotAccessAdminImport() throws Exception {
+        String userToken = registerAndLogin("plain-import-user");
+        UUID userId = userId("plain-import-user");
+        String csv = "name,url,username,password,note\r\nG,u,l,p,n\r\n";
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "import.csv", "text/csv",
+                csv.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+        mockMvc.perform(multipart("/api/admin/users/{id}/vault/import", userId)
+                        .file(file)
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
     }
 }

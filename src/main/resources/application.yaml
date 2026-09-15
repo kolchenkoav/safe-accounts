@@ -27,6 +27,15 @@ spring:
     locations: classpath:db/migration
     validate-on-migrate: true
 
+  # Task-07/08: multipart для импорта CSV. Лимит Spring multipart намеренно
+  # ВЫШЕ сервисного лимита MAX_CSV_BYTES (10 МБ), чтобы сервисный
+  # VaultExportImportService.importFromCsv первым бросал PayloadTooLargeException
+  # → 413 RFC 7807 (а не MaxUploadSizeExceededException от Tomcat).
+  servlet:
+    multipart:
+      max-file-size: 11MB
+      max-request-size: 12MB
+
 server:
   port: ${SERVER_PORT:8080}
   error:

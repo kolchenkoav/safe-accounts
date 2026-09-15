@@ -1,12 +1,20 @@
 package com.example.safeaccounts.api;
 
 import com.example.safeaccounts.domain.User;
+import com.example.safeaccounts.repository.UserRepository;
 import com.example.safeaccounts.security.AuthUser;
 import com.example.safeaccounts.service.AdminService;
+import com.example.safeaccounts.service.AuthServiceException;
 import com.example.safeaccounts.service.KeyRotationException;
+import com.example.safeaccounts.service.VaultExportImportService;
+import com.example.safeaccounts.service.csv.ConflictStrategy;
+import com.example.safeaccounts.service.csv.ExportPayload;
+import com.example.safeaccounts.service.csv.ImportReport;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.ProblemDetail;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -18,8 +26,11 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -39,9 +50,15 @@ import java.util.UUID;
 public class AdminController {
 
     private final AdminService adminService;
+    private final VaultExportImportService exportImportService;
+    private final UserRepository userRepository;
 
-    public AdminController(AdminService adminService) {
+    public AdminController(AdminService adminService,
+                           VaultExportImportService exportImportService,
+                           UserRepository userRepository) {
         this.adminService = adminService;
+        this.exportImportService = exportImportService;
+        this.userRepository = userRepository;
     }
 
     // -- пользователи ---------------------------------------------------------
@@ -139,6 +156,82 @@ public class AdminController {
     public AdminRewrapResponse rewrapDeks(@AuthenticationPrincipal AuthUser principal) {
         AdminService.RewrapResult result = adminService.rewrapDeks(principal.user());
         return new AdminRewrapResponse(result.rewrappedUsers(), result.activeKekId());
+    }
+
+    // -- export / import пользовательского сейфа (Task-07 / Task-08) ---------
+
+    /**
+     * Экспорт сейфа указанного пользователя в CSV (ADMIN-only).
+     * <p>
+     * Безопасность: ROLE_ADMIN (проверка на классе через {@code @PreAuthorize} +
+     * URL-правило SecurityConfig). Пользователь с {@code id} обязан существовать,
+     * иначе — 404 RFC 7807 (не раскрываем, существует ли он в принципе, но это
+     * требование задачи). Заголовок {@code X-Vault-Export-Warning} обязателен.
+     */
+    @GetMapping("/users/{id}/vault/export")
+    public ResponseEntity<byte[]> exportUserVault(
+            @AuthenticationPrincipal AuthUser principal,
+            @PathVariable UUID id,
+            @RequestParam(defaultValue = "false") boolean bom) {
+        User actor = currentUser(principal);
+        User target = requireUserOrNotFound(id);
+
+        ExportPayload payload = exportImportService.export(actor, target, bom);
+
+        String filename = "vault-user-" + VaultController.safeFilenamePart(target.getUsername())
+                + "-" + VaultController.compactTimestamp(Instant.now()) + ".csv";
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType("text/csv; charset=utf-8"));
+        headers.set(HttpHeaders.CONTENT_DISPOSITION,
+                "attachment; filename=\"" + filename + "\"");
+        headers.add(VaultController.EXPORT_WARNING_HEADER, VaultController.EXPORT_WARNING_VALUE);
+        headers.setContentLength(payload.csv().length);
+        return new ResponseEntity<>(payload.csv(), headers, HttpStatus.OK);
+    }
+
+    /**
+     * Импорт CSV в сейф указанного пользователя (ADMIN-only).
+     * <p>
+     * multipart: {@code file} (CSV), {@code conflictStrategy} ({@code skip|upsert}).
+     * Query: {@code ?dryRun=true|false}, {@code ?failFast=true|false}.
+     * Если пользователь с {@code id} не найден — 404 RFC 7807.
+     */
+    @PostMapping(path = "/users/{id}/vault/import",
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ImportReport> importUserVault(
+            @AuthenticationPrincipal AuthUser principal,
+            @PathVariable UUID id,
+            @RequestPart(VaultController.IMPORT_FILE_PART) MultipartFile file,
+            @RequestParam(defaultValue = "skip") String conflictStrategy,
+            @RequestParam(defaultValue = "false") boolean dryRun,
+            @RequestParam(defaultValue = "false") boolean failFast) throws IOException {
+        User actor = currentUser(principal);
+        User target = requireUserOrNotFound(id);
+        ConflictStrategy strategy = VaultController.parseConflictStrategy(conflictStrategy);
+        if (file == null || file.isEmpty()) {
+            throw new com.example.safeaccounts.service.csv.InvalidCsvException("CSV file is empty");
+        }
+        byte[] csvBytes = file.getBytes();
+        ImportReport report = exportImportService.importFromCsv(
+                actor, target, csvBytes, strategy, dryRun, failFast);
+        return ResponseEntity.ok(report);
+    }
+
+    // -- helpers --------------------------------------------------------------
+
+    /** Пользователь из Bearer-principal (User — LAZY, данные уже зафиксированы). */
+    private static User currentUser(AuthUser principal) {
+        return principal.user();
+    }
+
+    /**
+     * Возвращает пользователя по id; если не найден — бросает
+     * {@link AuthServiceException}(USER_NOT_FOUND), что маппится в 404.
+     */
+    private User requireUserOrNotFound(UUID id) {
+        return userRepository.findById(id)
+                .orElseThrow(() -> new AuthServiceException(
+                        AuthServiceException.Reason.USER_NOT_FOUND));
     }
 
     /** Ошибка ротации: понятный RFC 7807 ответ без деталей материала ключей. */
