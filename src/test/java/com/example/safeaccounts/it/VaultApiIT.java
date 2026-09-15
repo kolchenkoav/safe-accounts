@@ -692,4 +692,56 @@ UUID entryId = createEntry(ownerToken, "Private", "https://private.example.com",
         mockMvc.perform(multipart("/api/vault/import").file(file))
                 .andExpect(status().isUnauthorized());
     }
+
+    // -- Фаза 8: инвариант формата CSV (ровно 5 колонок) -------------------
+
+    @Test
+    void exportedCsvHasExactlyFiveColumnsInHeaderAndEveryRow() throws Exception {
+        String token = registerAndLogin("vault-five-cols");
+        // Три записи, в т.ч. одна со значением, содержащим запятую —
+        // для проверки RFC 4180-экранирования колонок.
+        createEntry(token, "A,B", "https://a.example.com", "alice", ENTRY_PASSWORD, null);
+        createEntry(token, "B", "https://b.example.com", "bob", ENTRY_PASSWORD, null);
+        createEntry(token, "C", "https://c.example.com", "carol", ENTRY_PASSWORD, null);
+
+        byte[] csv = mockMvc.perform(get("/api/vault/export")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray();
+        String text = new String(csv, java.nio.charset.StandardCharsets.UTF_8);
+        String[] lines = text.split("\r\n", -1);
+
+        // Заголовок — строго 5 колонок
+        assertThat(lines[0]).isEqualTo("name,url,username,password,note");
+        assertThat(countCsvColumns(lines[0])).isEqualTo(5);
+
+        // Каждая непустая строка данных — строго 5 колонок (RFC 4180 split)
+        for (int i = 1; i < lines.length; i++) {
+            if (lines[i].isEmpty()) {
+                continue; // завершающий CRLF
+            }
+            assertThat(countCsvColumns(lines[i]))
+                    .as("row %d must have 5 columns: %s", i, lines[i])
+                    .isEqualTo(5);
+        }
+    }
+
+    /** Считает колонки по RFC 4180 (с учётом кавычек и удвоенных кавычек). */
+    private static int countCsvColumns(String line) {
+        int cols = 1;
+        boolean inQuotes = false;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == '"') {
+                if (inQuotes && i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                    i++; // экранированная кавычка ""
+                } else {
+                    inQuotes = !inQuotes;
+                }
+            } else if (c == ',' && !inQuotes) {
+                cols++;
+            }
+        }
+        return cols;
+    }
 }

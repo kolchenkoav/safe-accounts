@@ -299,6 +299,39 @@ class VaultExportImportServiceTest {
     }
 
     @Test
+    void importDryRunUpsertDoesNotMutateExistingEntry() {
+        // Существующая запись с зашифрованными полями; её *Enc-снимок запоминаем.
+        VaultEntry existing = encryptedEntry(
+                "Gmail", "https://gmail.com", "alice", "old-pass", "");
+        String beforePasswordEnc = existing.getPasswordEnc();
+        String beforeNameEnc = existing.getNameEnc();
+        when(vaultEntryRepository.findAllByUser_IdOrderByCreatedAtAsc(owner.getId()))
+                .thenReturn(List.of(existing));
+
+        byte[] csv = simpleCsv("Gmail2", "https://gmail.com", "alice", "new-pass", "n");
+        ImportReport report = service.importFromCsv(owner, owner, csv,
+                ConflictStrategy.UPSERT, true, false);
+
+        // Контракт отчёта сохранён.
+        assertThat(report.updated()).isEqualTo(1);
+        assertThat(report.created()).isZero();
+        assertThat(report.dryRun()).isTrue();
+
+        // Persistence-методы НЕ вызывались (важно: иначе Hibernate dirty-check
+        // может протащить мутацию в БД на commit).
+        verify(vaultEntryRepository, never()).saveAndFlush(any());
+        verify(vaultEntryRepository, never()).save(any());
+        verify(vaultEntryRepository, never()).delete(any());
+
+        // Управляемая JPA-сущность не была мутирована: шифротексты те же.
+        assertThat(existing.getPasswordEnc()).isEqualTo(beforePasswordEnc);
+        assertThat(existing.getNameEnc()).isEqualTo(beforeNameEnc);
+
+        // Аудит с dryRun=true всё равно пишется.
+        verifyAuditWithoutSecrets(1, 0, 1, 0, true, ConflictStrategy.UPSERT);
+    }
+
+    @Test
     void importFailFastRollsBackOnInvalidRow() {
         when(vaultEntryRepository.findAllByUser_IdOrderByCreatedAtAsc(owner.getId()))
                 .thenReturn(List.of());

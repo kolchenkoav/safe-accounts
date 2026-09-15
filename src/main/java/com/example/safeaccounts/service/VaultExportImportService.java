@@ -246,8 +246,11 @@ public class VaultExportImportService {
 
             try {
                 if (conflict != null) {
-                    applyUpdate(conflict, row, dek, now);
+                    // dryRun: НЕ мутируем управляемую JPA-сущность. Иначе
+                    // Hibernate на commit сделает UPDATE через dirty-checking,
+                    // что нарушает контракт dry-run (план, раздел 2.5).
                     if (!dryRun) {
+                        applyUpdate(conflict, row, dek, now);
                         vaultEntryRepository.saveAndFlush(conflict);
                     }
                     updated++;

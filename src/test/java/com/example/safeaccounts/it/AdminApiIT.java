@@ -565,4 +565,53 @@ private UUID createEntry(String token, String name, String site, String login,
                         .header("Authorization", "Bearer " + userToken))
                 .andExpect(status().isForbidden());
     }
+
+    // -- Фаза 8: инвариант формата admin-CSV (ровно 5 колонок) -------------
+
+    @Test
+    void adminExportedCsvHasExactlyFiveColumnsInHeaderAndEveryRow() throws Exception {
+        String adminToken = loginAdmin();
+        String userToken = registerAndLogin("admin-five-cols");
+        UUID userId = userId("admin-five-cols");
+        createEntry(userToken, "A", "https://a.example.com", "alice", "Admin-Five-Pass!", null);
+        createEntry(userToken, "B", "https://b.example.com", "bob", "Admin-Five-Pass!", null);
+
+        byte[] csv = mockMvc.perform(get("/api/admin/users/{id}/vault/export", userId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray();
+        String text = new String(csv, java.nio.charset.StandardCharsets.UTF_8);
+        String[] lines = text.split("\r\n", -1);
+
+        assertThat(lines[0]).isEqualTo("name,url,username,password,note");
+        assertThat(adminCountCsvColumns(lines[0])).isEqualTo(5);
+
+        for (int i = 1; i < lines.length; i++) {
+            if (lines[i].isEmpty()) {
+                continue;
+            }
+            assertThat(adminCountCsvColumns(lines[i]))
+                    .as("row %d must have 5 columns: %s", i, lines[i])
+                    .isEqualTo(5);
+        }
+    }
+
+    /** Считает колонки по RFC 4180 (с учётом кавычек и удвоенных кавычек). */
+    private static int adminCountCsvColumns(String line) {
+        int cols = 1;
+        boolean inQuotes = false;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == '"') {
+                if (inQuotes && i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                    i++;
+                } else {
+                    inQuotes = !inQuotes;
+                }
+            } else if (c == ',' && !inQuotes) {
+                cols++;
+            }
+        }
+        return cols;
+    }
 }

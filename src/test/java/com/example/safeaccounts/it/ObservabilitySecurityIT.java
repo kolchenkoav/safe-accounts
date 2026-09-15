@@ -2,6 +2,10 @@ package com.example.safeaccounts.it;
 
 import com.example.safeaccounts.api.LoginRequest;
 import com.example.safeaccounts.api.RegisterRequest;
+import com.example.safeaccounts.api.VaultEntryCreateRequest;
+import com.example.safeaccounts.repository.AuditEventRepository;
+import com.example.safeaccounts.repository.UserRepository;
+import com.example.safeaccounts.repository.VaultEntryRepository;
 import com.example.safeaccounts.security.RateLimiter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,12 +19,14 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -65,12 +71,25 @@ class ObservabilitySecurityIT {
     RateLimiter rateLimiter;
     @Autowired
     TransactionTemplate transactionTemplate;
+    @Autowired
+    UserRepository userRepository;
+    @Autowired
+    VaultEntryRepository vaultEntryRepository;
+    @Autowired
+    AuditEventRepository auditEventRepository;
 
     private static final String PASSWORD = "Str0ng-Passw0rd!";
 
     @BeforeEach
     void resetLimiter() {
         rateLimiter.reset();
+        // Герметичность для теста export-аудита (см. ниже): пользователь/записи
+        // не переиспользуются между прогонами JVM (имя регистрируется заново).
+        transactionTemplate.executeWithoutResult(status -> {
+            auditEventRepository.deleteAll();
+            vaultEntryRepository.deleteAll();
+            userRepository.deleteAll();
+        });
     }
 
     // -- rate limiting ---------------------------------------------------------
@@ -232,5 +251,64 @@ class ObservabilitySecurityIT {
                 .andExpect(status().isBadRequest())
                 .andReturn().getResponse().getContentAsString();
         assertThat(body).doesNotContain("short");
+    }
+
+    // -- Фаза 8: мини-тест антиутечки пароля записи после export -------------
+
+    @Test
+    void exportDoesNotLeakEntryPasswordIntoAuditLog() throws Exception {
+        String username = "obs-export-user";
+        // Уникальный пароль записи, который не встречается ни в одной служебной
+        // строке (CSV-формат, метки, etc.) — удобный маркер для поиска утечки.
+        String entryPassword = "ObsExport-Marker-Pass-9z8x!";
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new RegisterRequest(username, PASSWORD))))
+                .andExpect(status().isCreated());
+        MvcResult login = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new LoginRequest(username, PASSWORD))))
+                .andExpect(status().isOk())
+                .andReturn();
+        String token = objectMapper.readTree(login.getResponse().getContentAsString())
+                .get("accessToken").asText();
+
+        mockMvc.perform(post("/api/vault")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new VaultEntryCreateRequest(
+                                "ObsEntry", "https://obs.example.com", "alice",
+                                entryPassword, "obs-note"))))
+                .andExpect(status().isCreated());
+
+        // Сам экспорт: HTTP-тело содержит пароль (это by design), но
+        // журналируемый аудит и стандартный log-message — не должны.
+        mockMvc.perform(get("/api/vault/export")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-Vault-Export-Warning",
+                        "csv-contains-plaintext-passwords"));
+
+        transactionTemplate.executeWithoutResult(status -> {
+            var events = auditEventRepository
+                    .findAllByUser_IdOrderByCreatedAtDesc(
+                            userRepository.findByUsername(username).orElseThrow().getId());
+            // В аудите должны быть только агрегаты: ни пароля, ни логина, ни note.
+            for (var event : events) {
+                String blob = String.valueOf(event.getDetailsJson());
+                assertThat(blob)
+                        .as("audit detailsJson must not contain entry password for %s",
+                                event.getType())
+                        .doesNotContain(entryPassword)
+                        .doesNotContain("obs-note")
+                        .doesNotContain("alice");
+            }
+            // VAULT_EXPORTED записан и содержит только агрегаты.
+            var exported = events.stream()
+                    .filter(e -> "VAULT_EXPORTED".equals(e.getType()))
+                    .findFirst().orElseThrow();
+            String details = String.valueOf(exported.getDetailsJson());
+            assertThat(details).contains("entryCount").contains("csvSha256").contains("bom");
+        });
     }
 }
