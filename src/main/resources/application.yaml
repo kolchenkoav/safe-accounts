@@ -35,6 +35,16 @@ spring:
     multipart:
       max-file-size: 11MB
       max-request-size: 12MB
+      # TP B1: ленивый резолв — multipart парсится при резолве аргументов
+      # контроллера, а не в DispatcherServlet.checkMultipart ДО getHandler.
+      # Тогда обработчик уже смаплен и package-scoped advice достижим:
+      # MaxUploadSizeExceededException ловится ApiExceptionHandler → 413
+      # (раньше REST /api/vault/import >11MB отдавал 500). Фильтров,
+      # зависящих от раннего multipart-парсинга, в проекте нет (безопасно).
+      # Web-цепочка >11MB падает ещё в CsrfFilter (Tomcat парсит multipart
+      # при getParameter("_csrf")) — resolve-lazily это НЕ чинит, отложено
+      # на фазу 4/5 (ErrorController).
+      resolve-lazily: true
 
 server:
   port: ${SERVER_PORT:8080}

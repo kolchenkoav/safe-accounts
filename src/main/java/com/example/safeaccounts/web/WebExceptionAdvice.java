@@ -4,6 +4,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 /**
@@ -34,5 +35,27 @@ public class WebExceptionAdvice {
     public String handleConcurrentModification(RedirectAttributes redirectAttributes) {
         redirectAttributes.addFlashAttribute("flashError", CONCURRENT_CHANGE_ERROR);
         return "redirect:/web/entries";
+    }
+
+    /**
+     * Файл импорта больше multipart-лимита (10 МБ, Фаза 3) — Spring отклоняет
+     * запрос до контроллера. В UI — flash + возврат на форму импорта (не 500).
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public String handleMaxUpload(RedirectAttributes redirectAttributes) {
+        redirectAttributes.addFlashAttribute("flashError",
+                "Файл больше 10 МБ — уменьшите файл и повторите");
+        return "redirect:/web/entries/import";
+    }
+
+    /**
+     * multipart-часть «file» отсутствует (форма отправлена без файла) —
+     * раньше было whitelabel-400. В UI: flash + возврат на форму импорта.
+     */
+    @ExceptionHandler(org.springframework.web.multipart.support.MissingServletRequestPartException.class)
+    public String handleMissingPart(RedirectAttributes redirectAttributes) {
+        redirectAttributes.addFlashAttribute("flashError",
+                "Не удалось прочитать файл — выберите CSV-файл и повторите");
+        return "redirect:/web/entries/import";
     }
 }

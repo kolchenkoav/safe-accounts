@@ -36,6 +36,24 @@
 
             <a class="button" th:href="@{/web/entries/new}">+ Новая запись</a>
 
+            <!-- CSV export/import для пользователя (Фаза 3) -->
+            <div class="export-import-panel">
+                <!-- GET-форма экспорта; подтверждение — data-confirm (без inline-JS) -->
+                <form
+                    th:action="@{/web/entries/export}"
+                    method="get"
+                    class="inline"
+                    data-confirm="CSV будет содержать пароли в открытом виде. Продолжить?"
+                >
+                    <label class="checkbox">
+                        <input type="checkbox" name="bom" value="true" />
+                        BOM UTF-8 (для Excel)
+                    </label>
+                    <button type="submit" class="small">Экспорт CSV</button>
+                </form>
+                <a class="button" th:href="@{/web/entries/import}">Импорт CSV</a>
+            </div>
+
             <table th:if="${!entries.isEmpty()}">
                 <thead>
                     <tr>

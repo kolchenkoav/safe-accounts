@@ -3,7 +3,13 @@ package com.example.safeaccounts.web;
 import com.example.safeaccounts.security.AuthUser;
 import com.example.safeaccounts.service.TagService;
 import com.example.safeaccounts.service.VaultException;
+import com.example.safeaccounts.service.VaultExportImportService;
 import com.example.safeaccounts.service.VaultService;
+import com.example.safeaccounts.service.csv.ConflictStrategy;
+import com.example.safeaccounts.service.csv.ExportPayload;
+import com.example.safeaccounts.service.csv.ImportReport;
+import com.example.safeaccounts.service.csv.InvalidCsvException;
+import com.example.safeaccounts.service.csv.PayloadTooLargeException;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -41,10 +47,13 @@ public class WebVaultController {
 
     private final VaultService vaultService;
     private final TagService tagService;
+    private final VaultExportImportService exportImportService;
 
-    public WebVaultController(VaultService vaultService, TagService tagService) {
+    public WebVaultController(VaultService vaultService, TagService tagService,
+                              VaultExportImportService exportImportService) {
         this.vaultService = vaultService;
         this.tagService = tagService;
+        this.exportImportService = exportImportService;
     }
 
 /** Форма и данные страницы списка (без паролей — Task-11/Task-05). */
@@ -235,6 +244,119 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
                     org.springframework.http.HttpStatus.NOT_FOUND);
         }
         return "redirect:/web/entries/" + id;
+    }
+
+    // -- CSV export/import для пользователя (Фаза 3) ---------------------------
+
+    /** Заголовок-предупреждение — то же значение, что в REST (VaultController). */
+    static final String EXPORT_WARNING_HEADER = "X-Vault-Export-Warning";
+    static final String EXPORT_WARNING_VALUE = "csv-contains-plaintext-passwords";
+
+    /**
+     * Экспорт собственного сейфа в CSV: тот же контракт, что REST
+     * GET /api/vault/export — text/csv, attachment-имя, предупреждение.
+     * Превышение MAX_EXPORT_ROWS — flash + возврат на список (не 413-страница).
+     */
+    @GetMapping("/web/entries/export")
+    public Object exportCsv(@AuthenticationPrincipal AuthUser principal,
+                            @RequestParam(defaultValue = "false") boolean bom,
+                            RedirectAttributes redirectAttributes) {
+        ExportPayload payload;
+        try {
+            payload = exportImportService.export(principal.user(), principal.user(), bom);
+        } catch (PayloadTooLargeException e) {
+            redirectAttributes.addFlashAttribute("flashError",
+                    "Экспорт невозможен: превышен лимит записей");
+            return "redirect:/web/entries";
+        }
+        String filename = "vault-" + safeFilenamePart(principal.getUsername())
+                + "-" + compactTimestamp(java.time.Instant.now()) + ".csv";
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.setContentType(
+                org.springframework.http.MediaType.parseMediaType("text/csv; charset=utf-8"));
+        headers.set(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
+                "attachment; filename=\"" + filename + "\"");
+        headers.add(EXPORT_WARNING_HEADER, EXPORT_WARNING_VALUE);
+        headers.setContentLength(payload.csv().length);
+        return new org.springframework.http.ResponseEntity<>(payload.csv(), headers,
+                org.springframework.http.HttpStatus.OK);
+    }
+
+    /** Страница импорта CSV: предупреждение о plaintext + multipart-форма. */
+    @GetMapping("/web/entries/import")
+    public String importPage() {
+        return "import";
+    }
+
+    /**
+     * Импорт CSV в собственный сейф. Tomcat буферизует multipart-части во
+     * временные файлы work-директории (авто-очистка после запроса); в БД,
+     * логи и модель файл не попадает. Ошибки — flash + редирект (без 500).
+     */
+    @PostMapping("/web/entries/import")
+    public String importCsv(@AuthenticationPrincipal AuthUser principal,
+                            @RequestParam("file") org.springframework.web.multipart.MultipartFile file,
+                            @RequestParam(defaultValue = "skip") String conflictStrategy,
+                            @RequestParam(defaultValue = "false") boolean dryRun,
+                            @RequestParam(defaultValue = "false") boolean failFast,
+                            RedirectAttributes redirectAttributes,
+                            Model model) throws java.io.IOException {
+        try {
+            // file == null невозможен: резолвер бросает
+            // MissingServletRequestPartException раньше (→ WebExceptionAdvice)
+            if (file.isEmpty()) {
+                throw new InvalidCsvException("CSV file is empty");
+            }
+            ConflictStrategy strategy = parseConflictStrategy(conflictStrategy);
+            ImportReport report = exportImportService.importFromCsv(
+                    principal.user(), principal.user(), file.getBytes(),
+                    strategy, dryRun, failFast);
+            model.addAttribute("report", report);
+            model.addAttribute("username", principal.getUsername());
+            return "import-report";
+        } catch (InvalidCsvException e) {
+            redirectAttributes.addFlashAttribute("flashError",
+                    "Не удалось разобрать CSV: " + e.getMessage());
+            return "redirect:/web/entries/import";
+        } catch (PayloadTooLargeException e) {
+            redirectAttributes.addFlashAttribute("flashError",
+                    "Файл слишком большой: " + e.getMessage());
+            return "redirect:/web/entries/import";
+        } catch (IllegalArgumentException e) {
+            redirectAttributes.addFlashAttribute("flashError",
+                    "Некорректные параметры импорта");
+            return "redirect:/web/entries/import";
+        }
+    }
+
+    /**
+     * Нейтральная часть имени файла из username: только [A-Za-z0-9._-]
+     * (тот же паттерн, что в api/VaultController).
+     */
+    private static String safeFilenamePart(String value) {
+        if (value == null || value.isEmpty()) {
+            return "user";
+        }
+        return value.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    /** ISO-8601 compact без «:» и «.» — как в REST. */
+    private static String compactTimestamp(java.time.Instant instant) {
+        return java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'")
+                .withZone(java.time.ZoneOffset.UTC)
+                .format(instant);
+    }
+
+    /** Парсинг conflictStrategy из формы (skip|upsert, default skip). */
+    private static ConflictStrategy parseConflictStrategy(String value) {
+        if (value == null || value.isBlank()) {
+            return ConflictStrategy.SKIP;
+        }
+        return switch (value.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "skip" -> ConflictStrategy.SKIP;
+            case "upsert" -> ConflictStrategy.UPSERT;
+            default -> throw new IllegalArgumentException("conflictStrategy must be skip|upsert");
+        };
     }
 
     private static String emptyToNull(String notes) {

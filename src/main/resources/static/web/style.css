@@ -29,6 +29,8 @@
     --alert-error-text: #fecaca;
     --alert-info-bg: #1e3a8a;
     --alert-info-text: #dbeafe;
+    --alert-warning-bg: #78350f;
+    --alert-warning-text: #fde68a;
 }
 
 [data-theme="light"] {
@@ -51,6 +53,8 @@
     --alert-error-text: #991b1b;
     --alert-info-bg: #dbeafe;
     --alert-info-text: #1e3a8a;
+    --alert-warning-bg: #fef3c7;
+    --alert-warning-text: #92400e;
 }
 
 body {
@@ -267,6 +271,92 @@ a.button {
 .alert-info {
     background: var(--alert-info-bg);
     color: var(--alert-info-text);
+}
+
+/* Предупреждение (импорт CSV: пароли в открытом виде, Фаза 3). */
+.alert-warning {
+    background: var(--alert-warning-bg);
+    color: var(--alert-warning-text);
+}
+
+/* Панель Экспорт/Импорт CSV над таблицей (Фаза 3). */
+.export-import-panel {
+    display: flex;
+    gap: 0.8rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 0.8rem;
+}
+
+.export-import-panel .checkbox {
+    margin-top: 0;
+    margin-right: 0.4rem;
+    font-weight: 400;
+}
+
+.export-import-panel button {
+    margin-top: 0;
+}
+
+label.checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-weight: 400;
+    margin-top: 0.8rem;
+}
+
+input[type="checkbox"],
+input[type="file"] {
+    accent-color: var(--accent);
+    margin-top: 0.2rem;
+    font: inherit;
+    color: var(--input-text);
+}
+
+input[type="file"] {
+    padding: 0.35rem;
+    border: 1px solid var(--input-border);
+    border-radius: 4px;
+    background: var(--input-bg);
+    box-sizing: border-box;
+    width: 100%;
+}
+
+/* Карточки-агрегаты отчёта импорта (Фаза 3). */
+.report-cards {
+    display: flex;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+}
+
+.report-card {
+    flex: 1 1 100px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.8rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--input-bg);
+}
+
+.report-card .num {
+    font-size: 1.5rem;
+    font-weight: 700;
+}
+
+.report-card .caption {
+    font-size: 0.85rem;
+    opacity: 0.8;
+}
+
+.dry-run-badge {
+    border-color: var(--alert-warning-bg);
+    background: var(--alert-warning-bg);
+    color: var(--alert-warning-text);
 }
 
 .pagination {

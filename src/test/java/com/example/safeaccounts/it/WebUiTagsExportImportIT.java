@@ -28,10 +28,13 @@ import java.util.stream.Collectors;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrlPattern;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.view;
 
@@ -437,5 +440,320 @@ class WebUiTagsExportImportIT {
         // Ни тег, ни привязка не созданы; владелец не затронут
         assertThat(userTagCount("intruder")).isZero();
         assertThat(entryTagIds(UUID.fromString(entryId))).isEmpty();
+    }
+
+    // -- Фаза 3: CSV export/import для пользователя -----------------------------
+
+    private static final String CSV_HEADER = "name,url,username,password,note";
+
+    private static byte[] csv(String... rows) {
+        return String.join("\r\n", rows).concat("\r\n")
+                .getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** multipart POST импорта без фиксированных ожиданий статуса. */
+    private MvcResult performImport(org.springframework.mock.web.MockHttpSession session,
+                                    byte[] content, String strategy,
+                                    boolean dryRun, boolean failFast) throws Exception {
+        var builder = multipart("/web/entries/import")
+                .file(new org.springframework.mock.web.MockMultipartFile(
+                        "file", "test.csv", "text/csv", content))
+                .param("conflictStrategy", strategy);
+        // session() на билдере возвращает базовый тип (Spring не генерализует
+        // MockHttpServletRequestBuilder) — применяем отдельными statements
+        builder.session(session);
+        if (dryRun) {
+            builder.param("dryRun", "true");
+        }
+        if (failFast) {
+            builder.param("failFast", "true");
+        }
+        return mockMvc.perform(builder.with(csrf())).andReturn();
+    }
+
+    @Test
+    void exportCsvReturnsOwnEntriesWithWarningAndDisposition() throws Exception {
+        registerUser("exporter");
+        registerUser("otherexporter");
+        var session = login("exporter");
+        createEntry(session, "Моя-экспорт-1");
+        createEntry(session, "Моя-экспорт-2");
+        var otherSession = login("otherexporter");
+        createEntry(otherSession, "Чужая-экспорт");
+
+        MvcResult result = mockMvc.perform(get("/web/entries/export").session(session))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith("text/csv"))
+                .andExpect(header().string("X-Vault-Export-Warning",
+                        "csv-contains-plaintext-passwords"))
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("attachment")))
+                .andReturn();
+
+        String body = new String(result.getResponse().getContentAsByteArray(),
+                StandardCharsets.UTF_8);
+        String firstLine = body.substring(0, body.indexOf('\n')).trim();
+        assertThat(firstLine).isEqualTo(CSV_HEADER);
+        assertThat(body).contains("Моя-экспорт-1");
+        assertThat(body).contains("Моя-экспорт-2");
+        // Чужие записи в экспорт не попадают
+        assertThat(body).doesNotContain("Чужая-экспорт");
+    }
+
+    @Test
+    void exportCsvBomFlagControlsBomPrefix() throws Exception {
+        registerUser("bomuser");
+        var session = login("bomuser");
+        createEntry(session, "BOM-запись");
+
+        byte[] withBom = mockMvc.perform(get("/web/entries/export")
+                        .session(session).param("bom", "true"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray();
+        assertThat(withBom.length).isGreaterThan(3);
+        assertThat(withBom[0] & 0xFF).isEqualTo(0xEF);
+        assertThat(withBom[1] & 0xFF).isEqualTo(0xBB);
+        assertThat(withBom[2] & 0xFF).isEqualTo(0xBF);
+
+        byte[] withoutBom = mockMvc.perform(get("/web/entries/export")
+                        .session(session))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray();
+        assertThat(withoutBom.length).isGreaterThan(3);
+        assertThat(withoutBom[0] & 0xFF).isNotEqualTo(0xEF);
+    }
+
+    @Test
+    void importPageShowsWarningAndMultipartForm() throws Exception {
+        registerUser("importpage");
+        var session = login("importpage");
+        mockMvc.perform(get("/web/entries/import").session(session))
+                .andExpect(status().isOk())
+                .andExpect(view().name("import"))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("multipart/form-data")))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("alert-warning")))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("пароли в открытом виде")));
+    }
+
+    @Test
+    void importCreatesEntriesAndShowsReport() throws Exception {
+        registerUser("importer1");
+        var session = login("importer1");
+        byte[] content = csv(CSV_HEADER,
+                "Импорт-раз,https://imp1.example,u1,Pass-111,n1",
+                "Импорт-два,https://imp2.example,u2,Pass-222,n2");
+
+        MvcResult report = mockMvc.perform(multipart("/web/entries/import")
+                        .file(new org.springframework.mock.web.MockMultipartFile(
+                                "file", "test.csv", "text/csv", content))
+                        .param("conflictStrategy", "skip")
+                        .with(csrf())
+                        .session(session))
+                .andExpect(status().isOk())
+                .andExpect(view().name("import-report"))
+                .andReturn();
+        String html = html(report);
+        assertThat(html).contains("data-metric=\"created\">2<");
+        assertThat(html).contains("data-metric=\"failed\">0<");
+
+        // Записи видны в списке
+        mockMvc.perform(get("/web/entries").session(session))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Импорт-раз")))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Импорт-два")));
+    }
+
+    @Test
+    void importSkipStrategySkipsDuplicates() throws Exception {
+        registerUser("importskip");
+        var session = login("importskip");
+        byte[] content = csv(CSV_HEADER,
+                "Скип-1,https://skip.example,u1,Pass-111,n1",
+                "Скип-2,https://skip.example,u2,Pass-222,n2");
+        performImport(session, content, "skip", false, false);
+
+        MvcResult second = performImport(session, content, "skip", false, false);
+        String html = html(second);
+        assertThat(html).contains("data-metric=\"created\">0<");
+        assertThat(html).contains("data-metric=\"skipped\">2<");
+
+        long count = transactionTemplate.execute(tx -> vaultEntryRepository.count());
+        assertThat(count).isEqualTo(2);
+    }
+
+    @Test
+    void importUpsertUpdatesExistingEntries() throws Exception {
+        registerUser("importupsert");
+        var session = login("importupsert");
+        byte[] original = csv(CSV_HEADER,
+                "Апсерт-1,https://up.example,u1,Old-Pass-1,n1",
+                "Апсерт-2,https://up.example,u2,Old-Pass-2,n2");
+        performImport(session, original, "skip", false, false);
+
+        byte[] changed = csv(CSV_HEADER,
+                "Апсерт-1,https://up.example,u1,New-Pass-1,n1",
+                "Апсерт-2,https://up.example,u2,New-Pass-2,n2");
+        MvcResult report = performImport(session, changed, "upsert", false, false);
+        assertThat(html(report)).contains("data-metric=\"updated\">2<");
+
+        // Дублей не появилось: по-прежнему 2 записи
+        long count = transactionTemplate.execute(tx -> vaultEntryRepository.count());
+        assertThat(count).isEqualTo(2);
+    }
+
+    @Test
+    void importDryRunDoesNotChangeAnything() throws Exception {
+        registerUser("importdry");
+        var session = login("importdry");
+        byte[] content = csv(CSV_HEADER,
+                "Драй-1,https://dry.example,u1,Pass-111,n1",
+                "Драй-2,https://dry.example,u2,Pass-222,n2");
+
+        MvcResult report = performImport(session, content, "skip", true, false);
+        String html = html(report);
+        assertThat(html).contains("dry-run");
+        assertThat(html).contains("data-metric=\"created\">2<");
+
+        long count = transactionTemplate.execute(tx -> vaultEntryRepository.count());
+        assertThat(count).isZero();
+    }
+
+    @Test
+    void importInvalidRowFailsOnlyThatRow() throws Exception {
+        registerUser("importfail");
+        var session = login("importfail");
+        byte[] content = csv(CSV_HEADER,
+                "Валидная,https://ok.example,u1,Pass-111,n1",
+                "Пустой-пароль,https://bad.example,u2,,n2");
+
+        MvcResult report = performImport(session, content, "skip", false, false);
+        String html = html(report);
+        assertThat(html).contains("data-metric=\"created\">1<");
+        assertThat(html).contains("data-metric=\"failed\">1<");
+        // Номер строки с ошибкой — в таблице ошибок отчёта
+        assertThat(html).contains("2</td>");
+    }
+
+    @Test
+    void importFailFastCreatesNothing() throws Exception {
+        registerUser("importff");
+        var session = login("importff");
+        byte[] content = csv(CSV_HEADER,
+                "Валидная-фф,https://ok.example,u1,Pass-111,n1",
+                "Битая-фф,https://bad.example,u2,,n2");
+
+        // failFast: InvalidCsvException пробрасывается → flash + redirect (не 500);
+        // транзакция сервиса откатывается — ничего не создано
+        MvcResult result = performImport(session, content, "skip", false, true);
+        assertThat(result.getResponse().getStatus()).isEqualTo(302);
+        assertThat(result.getFlashMap().get("flashError").toString())
+                .contains("Не удалось разобрать CSV");
+
+        long count = transactionTemplate.execute(tx -> vaultEntryRepository.count());
+        assertThat(count).isZero();
+    }
+
+    @Test
+    void importPostWithoutCsrfTokenIsRejected() throws Exception {
+        registerUser("importcsrf");
+        var session = login("importcsrf");
+        mockMvc.perform(multipart("/web/entries/import")
+                        .file(new org.springframework.mock.web.MockMultipartFile(
+                                "file", "test.csv", "text/csv",
+                                csv(CSV_HEADER, "x,https://x.example,u,p,n")))
+                        .session(session))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void importGarbageFileShowsFlashAndRedirectsNot500() throws Exception {
+        registerUser("importjunk");
+        var session = login("importjunk");
+        // Битый файл + строгий режим: сервис пробрасывает InvalidCsvException
+        // (при failFast=false он сам погасит её в отчёт с ошибкой уровня файла).
+        // Проверяем контроллерный flash-путь: 3xx + сообщение, не 500.
+        byte[] garbage = new byte[]{(byte) 0xFF, (byte) 0xFE, 0x00, 0x01, 0x02};
+        mockMvc.perform(multipart("/web/entries/import")
+                        .file(new org.springframework.mock.web.MockMultipartFile(
+                                "file", "junk.csv", "text/csv", garbage))
+                        .param("failFast", "true")
+                        .with(csrf())
+                        .session(session))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/entries/import"))
+                .andExpect(flash().attribute("flashError",
+                        org.hamcrest.Matchers.containsString("Не удалось разобрать CSV")));
+    }
+
+    @Test
+    void importGarbageWithoutFailFastRendersReportWithFileErrorNot500() throws Exception {
+        registerUser("importjunk2");
+        var session = login("importjunk2");
+        // Одноколоночный «заголовок» без failFast → отчёт с ошибкой уровня файла
+        byte[] garbage = "not a csv at all".getBytes(StandardCharsets.UTF_8);
+        mockMvc.perform(multipart("/web/entries/import")
+                        .file(new org.springframework.mock.web.MockMultipartFile(
+                                "file", "junk.csv", "text/csv", garbage))
+                        .with(csrf())
+                        .session(session))
+                .andExpect(status().isOk())
+                .andExpect(view().name("import-report"))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("data-metric=\"failed\">1<")));
+    }
+
+    // -- TP-фиксы фазы 3 ---------------------------------------------------------
+
+    @Test
+    void importPageAnonymousRedirectsToLogin() throws Exception {
+        mockMvc.perform(get("/web/entries/import"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrlPattern("**/web/login"));
+    }
+
+    @Test
+    void importEmptyFileShowsFlashAndRedirectsNot500() throws Exception {
+        registerUser("importempty");
+        var session = login("importempty");
+        mockMvc.perform(multipart("/web/entries/import")
+                        .file(new org.springframework.mock.web.MockMultipartFile(
+                                "file", "empty.csv", "text/csv", new byte[0]))
+                        .with(csrf())
+                        .session(session))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/entries/import"))
+                .andExpect(flash().attribute("flashError",
+                        org.hamcrest.Matchers.containsString("Не удалось")));
+    }
+
+    @Test
+    void importHeaderOnlyCsvRendersEmptyReport() throws Exception {
+        registerUser("importheader");
+        var session = login("importheader");
+        MvcResult report = performImport(session, csv(CSV_HEADER), "skip", false, false);
+        assertThat(html(report)).contains("data-metric=\"total\">0<");
+        assertThat(html(report)).contains("data-metric=\"created\">0<");
+    }
+
+    @Test
+    void exportEmptyVaultReturnsHeaderOnlyCsvWithWarning() throws Exception {
+        registerUser("exportempty");
+        var session = login("exportempty");
+        MvcResult result = mockMvc.perform(get("/web/entries/export").session(session))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith("text/csv"))
+                .andExpect(header().string("X-Vault-Export-Warning",
+                        "csv-contains-plaintext-passwords"))
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("attachment")))
+                .andReturn();
+        String body = new String(result.getResponse().getContentAsByteArray(),
+                StandardCharsets.UTF_8).trim();
+        // Header-only: ровно строка заголовка и ничего больше
+        assertThat(body).isEqualTo(CSV_HEADER);
     }
 }

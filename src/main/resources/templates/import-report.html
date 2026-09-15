@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru" data-theme="dark">
+<!-- Каркас <head> (включая theme.js/main.js) — общий фрагмент -->
+<head th:replace="~{fragments :: pageHead('Результат импорта — safe-accounts')}"></head>
+<body>
+<nav>
+    <a th:href="@{/web/entries}">&larr; К записям</a>
+    <!-- Тема: тёмная/светлая, выбор в localStorage (тёмная по умолчанию) -->
+    <button type="button" th:replace="~{fragments :: themeToggle}"></button>
+</nav>
+
+<main class="card">
+    <h1>Результат импорта</h1>
+
+    <!-- dry-run: отчёт сформирован, изменения в БД не применялись -->
+    <span class="tag-badge dry-run-badge" th:if="${report.dryRun}"
+        >dry-run: изменения не применены</span
+    >
+
+    <!-- Сводка (карточки-агрегаты); data-metric — для тестов -->
+    <div class="report-cards">
+        <div class="report-card">
+            <span class="num" data-metric="total" th:text="${report.totalRows}">0</span>
+            <span class="caption">всего строк</span>
+        </div>
+        <div class="report-card">
+            <span class="num" data-metric="created" th:text="${report.created}">0</span>
+            <span class="caption">создано</span>
+        </div>
+        <div class="report-card">
+            <span class="num" data-metric="updated" th:text="${report.updated}">0</span>
+            <span class="caption">обновлено</span>
+        </div>
+        <div class="report-card">
+            <span class="num" data-metric="skipped" th:text="${report.skipped}">0</span>
+            <span class="caption">пропущено</span>
+        </div>
+        <div class="report-card">
+            <span class="num" data-metric="failed" th:text="${report.failed}">0</span>
+            <span class="caption">ошибок</span>
+        </div>
+    </div>
+
+    <!-- Ошибки по строкам: только номер строки и нейтральная причина -->
+    <table th:if="${!report.errors.isEmpty()}">
+        <thead>
+            <tr>
+                <th>Строка</th>
+                <th>Причина</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr th:each="err : ${report.errors}">
+                <td th:text="${err.row}">0</td>
+                <td th:text="${err.reason}">reason</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <!-- Файл повторно НЕ подставляем: plaintext не храним в сессии -->
+    <div class="actions">
+        <a class="button" th:href="@{/web/entries}">К записям</a>
+        <a class="button" th:href="@{/web/entries/import}">Импортировать ещё</a>
+    </div>
+</main>
+</body>
+</html>

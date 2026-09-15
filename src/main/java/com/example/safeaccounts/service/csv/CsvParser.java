@@ -59,9 +59,10 @@ public class CsvParser {
         String[] expected = {"name", "url", "username", "password", "note"};
         for (int i = 0; i < expected.length; i++) {
             if (!expected[i].equals(header.get(i))) {
+                // TP A1: содержимое ячейки НЕ подставляем в сообщение —
+                // данные файла не должны попадать в ответы об ошибках.
                 throw new InvalidCsvException(
-                        "CSV header column " + (i + 1) + " must be '" + expected[i]
-                                + "', got '" + header.get(i) + "'");
+                        "CSV header column " + (i + 1) + " must be '" + expected[i] + "'");
             }
         }
         return Arrays.asList(expected);
