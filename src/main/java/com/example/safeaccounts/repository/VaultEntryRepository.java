@@ -26,6 +26,16 @@ public interface VaultEntryRepository extends JpaRepository<VaultEntry, UUID> {
             org.springframework.data.domain.Pageable pageable);
 
     /**
+     * Пагинированный owner-scoped список записей, помеченных указанным тегом
+     * (фильтр «?tag=<id>» web-UI, Фаза 2).
+     */
+    org.springframework.data.domain.Page<VaultEntry> findAllByUser_IdAndTags_Id(
+            UUID userId, UUID tagId, org.springframework.data.domain.Pageable pageable);
+
+    /** Количество записей, ссылающихся на тег (для сообщения об ошибке удаления). */
+    long countByTags_Id(UUID tagId);
+
+    /**
      * True, если хотя бы одна запись ссылается на указанный тег.
      * Используется сервисом тегов для запрета удаления «занятого» тега.
      */

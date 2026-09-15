@@ -6,6 +6,8 @@
         <nav>
             <span class="user" th:text="${username}">user</span>
             <span>
+                <!-- «Теги» — всем аутентифицированным (Фаза 2) -->
+                <a th:href="@{/web/tags}">Теги</a>
                 <!-- Ссылка «Админка» — только ROLE_ADMIN (Task-12) -->
                 <a th:if="${isAdmin}" th:href="@{/web/admin/users}">Админка</a>
                 <form th:action="@{/logout}" method="post" class="inline">
@@ -24,6 +26,13 @@
                 th:if="${flashMessage}"
                 th:text="${flashMessage}"
             ></div>
+            <div class="alert alert-error" th:if="${flashError}" th:text="${flashError}"></div>
+
+            <!-- Индикатор активного фильтра по тегу + сброс (Фаза 2) -->
+            <div class="tag-filter" th:if="${tagFilterName != null}">
+                <span>Тег: <strong th:text="${tagFilterName}">tag</strong></span>
+                <a th:href="@{/web/entries}" title="Сбросить фильтр">✕</a>
+            </div>
 
             <a class="button" th:href="@{/web/entries/new}">+ Новая запись</a>
 
@@ -40,7 +49,17 @@
                 <tbody>
                     <!-- Пароль и примечание в списке НЕ отображаются (Task-11) -->
                     <tr th:each="entry : ${entries}">
-                        <td th:text="${entry.name}"></td>
+                        <td>
+                            <div class="entry-name" th:text="${entry.name}"></div>
+                            <!-- Чип тега — ссылка-фильтр ?tag=<id> (Фаза 2) -->
+                            <a
+                                class="tag-badge"
+                                th:each="tag : ${entry.tags}"
+                                th:href="@{/web/entries(tag=${tag.id}, page=0)}"
+                                th:text="${tag.name}"
+                                >tag</a
+                            >
+                        </td>
                         <td th:text="${entry.site}"></td>
                         <td th:text="${entry.login}"></td>
                         <td
@@ -59,7 +78,7 @@
             <div class="pagination" th:if="${totalPages > 1}">
                 <a
                     th:if="${currentPage > 0}"
-                    th:href="@{/web/entries(page=${currentPage - 1})}"
+                    th:href="@{/web/entries(page=${currentPage - 1}, tag=${tagFilterId})}"
                     >&larr;</a
                 >
                 <span
@@ -67,7 +86,7 @@
                 ></span>
                 <a
                     th:if="${currentPage + 1 < totalPages}"
-                    th:href="@{/web/entries(page=${currentPage + 1})}"
+                    th:href="@{/web/entries(page=${currentPage + 1}, tag=${tagFilterId})}"
                     >&rarr;</a
                 >
             </div>

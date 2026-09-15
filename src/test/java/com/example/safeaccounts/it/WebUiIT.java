@@ -6,6 +6,9 @@ import com.example.safeaccounts.repository.VaultEntryRepository;
 import com.example.safeaccounts.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -777,5 +780,76 @@ class WebUiIT {
                 .andExpect(status().isOk())
                 .andExpect(content().string(
                         org.hamcrest.Matchers.containsString("localStorage")));
+    }
+
+    // -- Отложенные фиксы фазы 1 (B2/B5) -----------------------------------------
+
+    /**
+     * Границы поля name (фикс B2): ровно 256 — создается; 257 и только
+     * пробелы — повторный рендер формы (200 + alert-error), запись не создается.
+     */
+    @ParameterizedTest
+    @MethodSource("entryNameBoundaryCases")
+    void entryNameBoundaries(String name, boolean expectCreated) throws Exception {
+        registerUser("namebounds");
+        MockHttpSessionHolder holder = login("namebounds");
+
+        MvcResult result = mockMvc.perform(post("/web/entries")
+                        .session(holder.session())
+                        .with(csrf())
+                        .param("name", name)
+                        .param("site", "https://example.com")
+                        .param("login", "alice")
+                        .param("password", ENTRY_PASSWORD)
+                        .param("notes", ""))
+                .andReturn();
+
+        long entries = transactionTemplate.execute(tx -> vaultEntryRepository.count());
+        if (expectCreated) {
+            assertThat(result.getResponse().getStatus()).isEqualTo(302);
+            assertThat(entries).isEqualTo(1);
+        } else {
+            assertThat(result.getResponse().getStatus()).isEqualTo(200);
+            assertThat(htmlOf(result)).contains("alert-error");
+            assertThat(entries).isZero();
+        }
+    }
+
+    static java.util.stream.Stream<Arguments> entryNameBoundaryCases() {
+        return java.util.stream.Stream.of(
+                Arguments.of("x".repeat(256), true),
+                Arguments.of("x".repeat(257), false),
+                Arguments.of("   ", false)
+        );
+    }
+
+    /**
+     * XSS (фикс B5): name с "<script>" экранируется Thymeleaf в списке
+     * и на карточке; сырого "<script>" в ответе нет.
+     */
+    @Test
+    void entryNameWithScriptTagIsEscapedInHtml() throws Exception {
+        registerUser("xssuser");
+        MockHttpSessionHolder holder = login("xssuser");
+        createEntry(holder, "<script>alert(1)</script>", "https://example.com",
+                "alice", ENTRY_PASSWORD);
+
+        MvcResult list = mockMvc.perform(get("/web/entries").session(holder.session()))
+                .andExpect(status().isOk())
+                .andReturn();
+        assertThat(htmlOf(list)).contains("&lt;script&gt;");
+        assertThat(htmlOf(list)).doesNotContain("<script>");
+
+        String id = firstEntryId(holder);
+        MvcResult view = mockMvc.perform(get("/web/entries/" + id).session(holder.session()))
+                .andExpect(status().isOk())
+                .andReturn();
+        assertThat(htmlOf(view)).contains("&lt;script&gt;");
+        assertThat(htmlOf(view)).doesNotContain("<script>");
+    }
+
+    private static String htmlOf(MvcResult result)
+            throws java.io.UnsupportedEncodingException {
+        return result.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
     }
 }

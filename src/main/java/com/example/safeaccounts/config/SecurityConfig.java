@@ -67,8 +67,8 @@ public class SecurityConfig {
                 // Rate limiting по IP и для веб-логина (Task-09/Task-11)
                 .addFilterBefore(rateLimitFilter, UsernamePasswordAuthenticationFilter.class)
                 .authorizeHttpRequests(auth -> auth
-                        // Статика веб-интерфейса (стили, скрипт темы) — без аутентификации
-                        .requestMatchers("/web/style.css", "/web/theme.js").permitAll()
+                        // Статика веб-интерфейса (стили, скрипты) — без аутентификации
+                        .requestMatchers("/web/style.css", "/web/theme.js", "/web/main.js").permitAll()
                         // Страница логина и обработчик формы — без аутентификации
                         .requestMatchers("/", "/web/login").permitAll()
                         // Task-12: веб-раздел администратора — только ROLE_ADMIN.

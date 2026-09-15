@@ -8,6 +8,7 @@ import com.example.safeaccounts.repository.TagRepository;
 import com.example.safeaccounts.repository.VaultEntryRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +22,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Управление тегами (Task-08, Фаза 5). Все операции owner-scoped:
@@ -54,15 +56,18 @@ public class TagService {
 
     private final TagRepository tagRepository;
     private final VaultEntryRepository vaultEntryRepository;
+    private final TagInsertHelper insertHelper;
     private final AuditService auditService;
     private final Clock clock;
 
     public TagService(TagRepository tagRepository,
                       VaultEntryRepository vaultEntryRepository,
+                      TagInsertHelper insertHelper,
                       AuditService auditService,
                       Clock clock) {
         this.tagRepository = tagRepository;
         this.vaultEntryRepository = vaultEntryRepository;
+        this.insertHelper = insertHelper;
         this.auditService = auditService;
         this.clock = clock;
     }
@@ -101,7 +106,20 @@ public class TagService {
                 });
 
         Tag tag = Tag.create(UUID.randomUUID(), actor, name, clock.instant());
-        Tag saved = tagRepository.save(tag);
+        Tag saved;
+        try {
+            // INSERT в отдельной транзакции (REQUIRES_NEW): гонка UNIQUE(user_id,
+            // name_lower) не переводит текущую tx в aborted (PG 25P02) —
+            // retry-find ниже выполняется в здоровой транзакции.
+            saved = insertHelper.insert(tag);
+        } catch (DataIntegrityViolationException e) {
+            // Гонка параллельных созданий: параллельный INSERT уже выиграл.
+            // Повторный find в ЗДОРОВОЙ внешней tx подтверждает дубль имени.
+            if (tagRepository.findByUser_IdAndNameLower(actor.getId(), nameLower).isPresent()) {
+                throw new TagAlreadyExistsException("Tag already exists");
+            }
+            throw e;
+        }
 
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("actor", actor.getUsername());
@@ -207,23 +225,10 @@ public class TagService {
 
         Set<Tag> resolved = new LinkedHashSet<>();
         for (String name : validated) {
-            String lower = name.toLowerCase(Locale.ROOT);
-            Tag tag = tagRepository.findByUser_IdAndNameLower(actor.getId(), lower)
-                    .orElseGet(() -> {
-                        Tag created = tagRepository.save(
-                                Tag.create(UUID.randomUUID(), actor, name, clock.instant()));
-                        // Аудит создания тега — в том числе при авто-создании
-                        // из replaceEntryTags (план, раздел 3.8).
-                        Map<String, Object> createDetails = new LinkedHashMap<>();
-                        createDetails.put("actor", actor.getUsername());
-                        createDetails.put("tagId", created.getId().toString());
-                        createDetails.put("name", created.getName());
-                        createDetails.put("via", "ENTRY_TAGS_REPLACED");
-                        auditService.record(actor, AuditService.TAG_CREATED, null,
-                                "Tag", created.getId().toString(), createDetails);
-                        return created;
-                    });
-            resolved.add(tag);
+            // Тот же race-safe путь создания, что и в attachOrCreate:
+            // INSERT через TagInsertHelper (REQUIRES_NEW), гонка UNIQUE
+            // разрешается повторным find в здоровой транзакции.
+            resolved.add(findOrCreateTag(actor, name, "ENTRY_TAGS_REPLACED"));
         }
 
         entry.getTags().clear();
@@ -242,6 +247,138 @@ public class TagService {
                 actor.getUsername(), entryId, resolved.size());
 
         return resolved;
+    }
+
+    // -- web: покомпонентные операции над тегами записи (Фаза 2) -------------
+
+    /**
+     * Привязывает тег к записи по имени: находит существующий тег пользователя
+     * по {@code name_lower}, иначе создаёт новый, — и добавляет его к записи.
+     * Повторная привязка уже привязанного тега — no-op (без аудита).
+     *
+     * @throws IllegalArgumentException если имя не проходит валидацию
+     * @throws VaultException           NOT_FOUND, если записи нет или она чужая
+     */
+    @Transactional
+    public Tag attachOrCreate(User actor, UUID entryId, String rawName) {
+        VaultEntry entry = requireOwnedEntry(actor, entryId);
+        Tag tag = findOrCreateTag(actor, rawName, "ENTRY_TAG_ATTACH");
+
+        if (entry.getTags().add(tag)) {
+            vaultEntryRepository.saveAndFlush(entry);
+            recordEntryTagsChanged(actor, entryId, entry.getTags().size());
+        }
+        return tag;
+    }
+
+    /**
+     * Находит тег пользователя по имени либо создаёт новый.
+     * <p>
+     * Гонка параллельных созданий: INSERT выполняется в ОТДЕЛЬНОЙ транзакции
+     * ({@link TagInsertHelper}, REQUIRES_NEW). При нарушении UNIQUE(user_id,
+     * name_lower) внутренняя tx откатывается, внешняя остаётся здоровой —
+     * повторный find ниже работает в рабочей транзакции. Ранее retry-find
+     * выполнялся в aborted-транзакции PG (25P02) → JpaSystemException → 500
+     * у проигравшего гонку.
+     * <p>
+     * Осознанный трейд-офф: тег, созданный в REQUIRES_NEW, закоммитится даже
+     * при откате внешней транзакции (возможен «осиротевший» тег без привязки —
+     * безвреден, удаляется через /web/tags).
+     *
+     * @throws IllegalArgumentException если имя не проходит валидацию
+     */
+    private Tag findOrCreateTag(User actor, String rawName, String via) {
+        String name = normalizeAndValidateName(rawName);
+        String nameLower = name.toLowerCase(Locale.ROOT);
+        Optional<Tag> existing = tagRepository.findByUser_IdAndNameLower(actor.getId(), nameLower);
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        Tag created;
+        try {
+            created = insertHelper.insert(
+                    Tag.create(UUID.randomUUID(), actor, name, clock.instant()));
+        } catch (DataIntegrityViolationException e) {
+            // Гонка: параллельный INSERT выиграл — переиспользуем его тег.
+            Tag winner = tagRepository.findByUser_IdAndNameLower(actor.getId(), nameLower)
+                    .orElseThrow(() -> e);
+            log.info("Tag race resolved: actor={}, tagId={} (parallel create won)",
+                    actor.getUsername(), winner.getId());
+            return winner;
+        }
+        Map<String, Object> createDetails = new LinkedHashMap<>();
+        createDetails.put("actor", actor.getUsername());
+        createDetails.put("tagId", created.getId().toString());
+        // Имя тега — не секрет (см. AGENTS.md).
+        createDetails.put("name", created.getName());
+        createDetails.put("via", via);
+        auditService.record(actor, AuditService.TAG_CREATED, null,
+                "Tag", created.getId().toString(), createDetails);
+        log.info("Tag created: actor={}, tagId={}", actor.getUsername(), created.getId());
+        return created;
+    }
+
+    /**
+     * Снимает тег с записи. Нетопотентно: тег, не привязанный к записи,
+     * ничего не меняет и аудита не пишет.
+     *
+     * @throws VaultException NOT_FOUND, если записи нет или она чужая
+     */
+    @Transactional
+    public void detach(User actor, UUID entryId, UUID tagId) {
+        VaultEntry entry = requireOwnedEntry(actor, entryId);
+        if (tagId == null) {
+            return;
+        }
+        boolean removed = entry.getTags().removeIf(t -> t.getId().equals(tagId));
+        if (removed) {
+            vaultEntryRepository.saveAndFlush(entry);
+            recordEntryTagsChanged(actor, entryId, entry.getTags().size());
+        }
+    }
+
+    /**
+     * Теги пользователя с количеством записей (страница /web/tags).
+     * Порядок — как в {@link #listUserTags(User)} (name_lower).
+     */
+    @Transactional(readOnly = true)
+    public List<TagWithCount> listWithEntryCounts(User actor) {
+        Map<UUID, Long> counts = tagRepository.countEntriesPerTagByUserId(actor.getId())
+                .stream()
+                .collect(Collectors.toMap(
+                        row -> (UUID) row[0],
+                        row -> (Long) row[1]));
+        return tagRepository.findAllByUser_Id(actor.getId()).stream()
+                .map(t -> new TagWithCount(t.getId(), t.getName(),
+                        counts.getOrDefault(t.getId(), 0L)))
+                .toList();
+    }
+
+    /** Количество записей, использующих тег пользователя (для UI-сообщения). */
+    @Transactional(readOnly = true)
+    public long countEntriesUsingTag(User actor, UUID tagId) {
+        return findTag(actor, tagId)
+                .map(tag -> vaultEntryRepository.countByTags_Id(tag.getId()))
+                .orElse(0L);
+    }
+
+    /** Тег пользователя + количество записей (для страницы /web/tags). */
+    public record TagWithCount(UUID id, String name, long entryCount) {
+    }
+
+    /**
+     * Аудит изменения набора тегов записи: только счётчик, без списка имён
+     * (AGENTS.md: в detailsJson — без перечисления тегов).
+     */
+    private void recordEntryTagsChanged(User actor, UUID entryId, int tagCount) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("actor", actor.getUsername());
+        details.put("entryId", entryId.toString());
+        details.put("tagCount", tagCount);
+        auditService.record(actor, AuditService.ENTRY_TAGS_REPLACED, null,
+                "VaultEntry", entryId.toString(), details);
+        log.info("Entry tags changed: actor={}, entryId={}, tagCount={}",
+                actor.getUsername(), entryId, tagCount);
     }
 
     // -- helpers --------------------------------------------------------------

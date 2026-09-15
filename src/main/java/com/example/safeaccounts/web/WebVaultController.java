@@ -1,6 +1,7 @@
 package com.example.safeaccounts.web;
 
 import com.example.safeaccounts.security.AuthUser;
+import com.example.safeaccounts.service.TagService;
 import com.example.safeaccounts.service.VaultException;
 import com.example.safeaccounts.service.VaultService;
 import jakarta.validation.Valid;
@@ -39,9 +40,11 @@ import java.util.UUID;
 public class WebVaultController {
 
     private final VaultService vaultService;
+    private final TagService tagService;
 
-    public WebVaultController(VaultService vaultService) {
+    public WebVaultController(VaultService vaultService, TagService tagService) {
         this.vaultService = vaultService;
+        this.tagService = tagService;
     }
 
 /** Форма и данные страницы списка (без паролей — Task-11/Task-05). */
@@ -53,16 +56,23 @@ public class WebVaultController {
             @Size(max = 8192) String notes) {
     }
 
-    /** Список записей текущего пользователя. */
+    /** Список записей текущего пользователя (+ опциональный фильтр по тегу, Фаза 2). */
     @GetMapping("/web/entries")
     public String list(@AuthenticationPrincipal AuthUser principal,
                        @RequestParam(defaultValue = "0") int page,
+                       @RequestParam(name = "tag", required = false) UUID tagId,
                        Model model) {
-        Page<VaultService.ListItem> items = vaultService.list(principal.user(), page, 20);
+        Page<VaultService.ListItem> items = vaultService.list(principal.user(), page, 20, tagId);
         model.addAttribute("entries", items.getContent());
         model.addAttribute("currentPage", page);
         model.addAttribute("totalPages", items.getTotalPages());
         model.addAttribute("username", principal.getUsername());
+        // Активный фильтр: id — для ссылок пагинации, name — для индикатора «Тег: ... ✕».
+        // Чужой/несуществующий tagId — без индикатора, просто пустой список.
+        tagService.findTag(principal.user(), tagId).ifPresent(tag -> {
+            model.addAttribute("tagFilterId", tag.getId());
+            model.addAttribute("tagFilterName", tag.getName());
+        });
         return "entries";
     }
 
@@ -99,6 +109,8 @@ model.addAttribute("entryForm", new EntryForm("", "", "", "", ""));
             model.addAttribute("entryId", id);
             model.addAttribute("entry", entry);
             model.addAttribute("revealed", false);
+            // Существующие теги пользователя — для datalist формы привязки (Фаза 2).
+            model.addAttribute("allTags", tagService.listUserTags(principal.user()));
             // Пароль не передаем в модель, когда не было reveal.
             return "entry-view";
         } catch (VaultException e) {
@@ -118,6 +130,7 @@ model.addAttribute("entryForm", new EntryForm("", "", "", "", ""));
             model.addAttribute("entryId", id);
             model.addAttribute("entry", entry);
             model.addAttribute("revealed", true);
+            model.addAttribute("allTags", tagService.listUserTags(principal.user()));
             return "entry-view";
         } catch (VaultException e) {
             // Чужая/несуществующая запись — нейтральный 404 без деталей.
@@ -185,6 +198,43 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
                     org.springframework.http.HttpStatus.NOT_FOUND);
         }
         return "redirect:/web/entries";
+    }
+
+    /** Привязка тега к записи по имени: найти существующий или создать (Фаза 2). */
+    @PostMapping("/web/entries/{id}/tags")
+    public String attachTag(@AuthenticationPrincipal AuthUser principal,
+                            @PathVariable UUID id,
+                            @RequestParam("tagName") String tagName,
+                            RedirectAttributes redirectAttributes) {
+        try {
+            tagService.attachOrCreate(principal.user(), id, tagName);
+            redirectAttributes.addFlashAttribute("flashMessage", "Тег привязан");
+        } catch (IllegalArgumentException e) {
+            redirectAttributes.addFlashAttribute("flashError",
+                    "Некорректное имя тега: буквы, цифры, пробел, _ - . (1–64 символа)");
+        } catch (VaultException e) {
+            // Чужая/несуществующая запись — нейтральный 404 без деталей.
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.NOT_FOUND);
+        }
+        return "redirect:/web/entries/" + id;
+    }
+
+    /** Отвязка тега от записи (POST + CSRF); редирект обратно на карточку. */
+    @PostMapping("/web/entries/{id}/tags/{tagId}/delete")
+    public String detachTag(@AuthenticationPrincipal AuthUser principal,
+                            @PathVariable UUID id,
+                            @PathVariable UUID tagId,
+                            RedirectAttributes redirectAttributes) {
+        try {
+            tagService.detach(principal.user(), id, tagId);
+            redirectAttributes.addFlashAttribute("flashMessage", "Тег снят с записи");
+        } catch (VaultException e) {
+            // Чужая/несуществующая запись — нейтральный 404 без деталей.
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.NOT_FOUND);
+        }
+        return "redirect:/web/entries/" + id;
     }
 
     private static String emptyToNull(String notes) {

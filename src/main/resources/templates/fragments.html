@@ -13,12 +13,15 @@
     <link rel="stylesheet" th:href="@{/web/style.css}" />
     <!-- Тема применяется как можно раньше (защита от мигания/FOUC); без defer. -->
     <script th:src="@{/web/theme.js}"></script>
+    <!-- Подтверждения действий (data-confirm) — без inline-JS (Фаза 2). -->
+    <script th:src="@{/web/main.js}" defer></script>
 </head>
 <body>
     <!-- Общая навигация раздела администратора (Task-12). -->
     <nav th:fragment="adminNav(username)">
         <span>
             <a th:href="@{/web/entries}">Сейф</a>
+            <a th:href="@{/web/tags}">Теги</a>
             <a th:href="@{/web/admin/users}">Пользователи</a>
             <a th:href="@{/web/admin/audit}">Аудит</a>
             <a th:href="@{/web/admin/crypto}">Ключи</a>

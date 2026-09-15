@@ -3,8 +3,10 @@ package com.example.safeaccounts.service;
 import com.example.safeaccounts.audit.AuditService;
 import com.example.safeaccounts.crypto.AesGcmCryptoService;
 import com.example.safeaccounts.crypto.AesGcmCryptoService.CryptoException;
+import com.example.safeaccounts.domain.Tag;
 import com.example.safeaccounts.domain.User;
 import com.example.safeaccounts.domain.VaultEntry;
+import com.example.safeaccounts.repository.TagRepository;
 import com.example.safeaccounts.repository.VaultEntryRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,6 +20,11 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.crypto.SecretKey;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -51,15 +58,18 @@ public class VaultService {
     static final int MAX_PAGE_SIZE = 100;
 
     private final VaultEntryRepository vaultEntryRepository;
+    private final TagRepository tagRepository;
     private final AesGcmCryptoService cryptoService;
     private final AuditService auditService;
     private final Clock clock;
 
     public VaultService(VaultEntryRepository vaultEntryRepository,
+                        TagRepository tagRepository,
                         AesGcmCryptoService cryptoService,
                         AuditService auditService,
                         Clock clock) {
         this.vaultEntryRepository = vaultEntryRepository;
+        this.tagRepository = tagRepository;
         this.cryptoService = cryptoService;
         this.auditService = auditService;
         this.clock = clock;
@@ -69,9 +79,13 @@ public class VaultService {
     public record CreatedEntry(VaultEntry entry, String name, String site, String login) {
     }
 
-    /** Расшифрованные поля записи для детального просмотра. */
+    /** Расшифрованные поля записи для детального просмотра (+ теги для чипов). */
     public record DecryptedEntry(String name, String site, String login, String password, String notes,
-                                 Instant createdAt, Instant updatedAt) {
+                                 Instant createdAt, Instant updatedAt, List<TagView> tags) {
+    }
+
+    /** Тег для отображения: id + имя (id нужен чипу-ссылке фильтра ?tag=). */
+    public record TagView(UUID id, String name) {
     }
 
     /**
@@ -115,11 +129,26 @@ public class VaultService {
      */
     @Transactional(readOnly = true)
     public Page<ListItem> list(User owner, int page, int size) {
+        return list(owner, page, size, null);
+    }
+
+    /**
+     * Пагинированный список с опциональным фильтром «записи с этим тегом»
+     * (web-UI «?tag=<id>», Фаза 2). Теги всех записей страницы догружаются
+     * одним запросом — без N+1.
+     */
+    @Transactional(readOnly = true)
+    public Page<ListItem> list(User owner, int page, int size, UUID tagId) {
         int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         Pageable pageable = PageRequest.of(Math.max(page, 0), safeSize,
                 Sort.by(Sort.Direction.ASC, "createdAt"));
-        Page<VaultEntry> entries = vaultEntryRepository.findAllByUser_Id(owner.getId(), pageable);
-        return entries.map(entry -> toListItem(owner, entry));
+        Page<VaultEntry> entries = tagId == null
+                ? vaultEntryRepository.findAllByUser_Id(owner.getId(), pageable)
+                : vaultEntryRepository.findAllByUser_IdAndTags_Id(owner.getId(), tagId, pageable);
+        Map<UUID, List<TagView>> tagsByEntry = loadTags(
+                entries.getContent().stream().map(VaultEntry::getId).toList());
+        return entries.map(entry -> toListItem(owner, entry,
+                tagsByEntry.getOrDefault(entry.getId(), List.of())));
     }
 
     /**
@@ -133,7 +162,8 @@ public class VaultService {
     public DecryptedEntry get(User owner, UUID entryId, boolean reveal) {
         VaultEntry entry = findOwnedOrThrow(owner, entryId);
         SecretKey dek = unwrapDek(owner);
-        DecryptedEntry decrypted = decryptEntry(entry, dek, reveal);
+        List<TagView> tags = loadTags(List.of(entryId)).getOrDefault(entryId, List.of());
+        DecryptedEntry decrypted = decryptEntry(entry, dek, reveal, tags);
         if (reveal) {
             auditService.record(owner, AuditService.SECRET_REVEALED, null,
                     "VaultEntry", entryId.toString(), null);
@@ -207,7 +237,8 @@ public class VaultService {
     }
 
     /** Расшифровывает метаданные записи; пароль — только по reveal. */
-    private DecryptedEntry decryptEntry(VaultEntry entry, SecretKey dek, boolean reveal) {
+    private DecryptedEntry decryptEntry(VaultEntry entry, SecretKey dek, boolean reveal,
+                                        List<TagView> tags) {
         try {
             String password = reveal ? cryptoService.decrypt(entry.getPasswordEnc(), dek) : null;
             return new DecryptedEntry(
@@ -217,7 +248,8 @@ public class VaultService {
                     password,
                     entry.getNotesEnc() == null ? null : cryptoService.decrypt(entry.getNotesEnc(), dek),
                     entry.getCreatedAt(),
-                    entry.getUpdatedAt());
+                    entry.getUpdatedAt(),
+                    tags);
         } catch (CryptoException e) {
             // Нейтрально наружу: детали (какое поле, причина) не раскрываются.
             throw new VaultException(VaultException.Reason.DECRYPTION_FAILED);
@@ -225,7 +257,7 @@ public class VaultService {
     }
 
     /** Расшифровывает только name/site/login для элемента списка; пароль не трогаем. */
-    private ListItem toListItem(User owner, VaultEntry entry) {
+    private ListItem toListItem(User owner, VaultEntry entry, List<TagView> tags) {
         SecretKey dek = unwrapDek(owner);
         try {
             return new ListItem(
@@ -235,14 +267,34 @@ public class VaultService {
                     cryptoService.decrypt(entry.getLoginEnc(), dek),
                     entry.getCreatedAt(),
                     entry.getUpdatedAt(),
-                    entry.getVersion());
+                    entry.getVersion(),
+                    tags);
         } catch (CryptoException e) {
             throw new VaultException(VaultException.Reason.DECRYPTION_FAILED);
         }
     }
 
-    /** Элемент списка: без пароля и notes (Task-05). */
+    /**
+     * Теги набора записей одним запросом (без N+1): entryId -> теги,
+     * отсортированные по имени (стабильный порядок в UI).
+     */
+    private Map<UUID, List<TagView>> loadTags(Collection<UUID> entryIds) {
+        if (entryIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, List<TagView>> result = new LinkedHashMap<>();
+        for (Object[] row : tagRepository.findTagsByEntryIds(entryIds)) {
+            UUID entryId = (UUID) row[0];
+            Tag tag = (Tag) row[1];
+            result.computeIfAbsent(entryId, key -> new ArrayList<>())
+                    .add(new TagView(tag.getId(), tag.getName()));
+        }
+        return result;
+    }
+
+    /** Элемент списка: без пароля и notes (Task-05); теги — для чипов (Фаза 2). */
     public record ListItem(UUID id, String name, String site, String login,
-                           Instant createdAt, Instant updatedAt, Long version) {
+                           Instant createdAt, Instant updatedAt, Long version,
+                           List<TagView> tags) {
     }
 }

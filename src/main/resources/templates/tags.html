@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru" data-theme="dark">
+<!-- Каркас <head> (включая theme.js/main.js) — общий фрагмент -->
+<head th:replace="~{fragments :: pageHead('Теги — safe-accounts')}"></head>
+<body>
+<nav>
+    <a th:href="@{/web/entries}">&larr; К записям</a>
+    <span>
+        <a th:if="${isAdmin}" th:href="@{/web/admin/users}">Админка</a>
+        <form th:action="@{/logout}" method="post" class="inline">
+            <button type="submit" class="link">Выйти</button>
+        </form>
+        <!-- Тема: тёмная/светлая, выбор в localStorage (тёмная по умолчанию) -->
+        <button type="button" th:replace="~{fragments :: themeToggle}"></button>
+    </span>
+</nav>
+
+<main class="card">
+    <h1>Теги</h1>
+
+    <div class="alert alert-info" th:if="${flashMessage}" th:text="${flashMessage}"></div>
+    <div class="alert alert-error" th:if="${flashError}" th:text="${flashError}"></div>
+
+    <!-- Создание: валидация имени — на сервере (jakarta.validation + сервис) -->
+    <form th:action="@{/web/tags}" method="post" class="filters">
+        <label>
+            Новый тег
+            <input
+                type="text"
+                name="name"
+                maxlength="64"
+                autocomplete="off"
+                placeholder="Имя тега (1–64)"
+            />
+        </label>
+        <button type="submit">Создать</button>
+    </form>
+
+    <table th:if="${!tags.isEmpty()}">
+        <thead>
+            <tr>
+                <th>Имя</th>
+                <th>Записей</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr th:each="tag : ${tags}">
+                <td th:text="${tag.name}">tag</td>
+                <td th:text="${tag.entryCount}">0</td>
+                <td>
+                    <!-- Inline-переименование -->
+                    <form
+                        th:action="@{/web/tags/{id}/rename(id=${tag.id})}"
+                        method="post"
+                        class="inline"
+                    >
+                        <input
+                            type="text"
+                            name="name"
+                            maxlength="64"
+                            th:value="${tag.name}"
+                            aria-label="Новое имя тега"
+                        />
+                        <button type="submit" class="small">Переименовать</button>
+                    </form>
+                    <!-- Удаление свободного тега; занятый — flash-ошибка -->
+                    <form
+                        th:action="@{/web/tags/{id}/delete(id=${tag.id})}"
+                        method="post"
+                        class="inline"
+                        data-confirm="Удалить тег?"
+                    >
+                        <button type="submit" class="danger small">Удалить</button>
+                    </form>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+    <p th:if="${tags.isEmpty()}">Тегов пока нет.</p>
+</main>
+</body>
+</html>

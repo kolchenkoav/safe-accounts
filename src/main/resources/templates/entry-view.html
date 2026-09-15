@@ -13,6 +13,9 @@
     <!-- Заголовок — name записи (fallback на site — на случай пустого name) -->
     <h1 th:text="${entry.name != null && !entry.name.isBlank() ? entry.name : entry.site}">Название</h1>
 
+    <div class="alert alert-info" th:if="${flashMessage}" th:text="${flashMessage}"></div>
+    <div class="alert alert-error" th:if="${flashError}" th:text="${flashError}"></div>
+
     <dl>
         <dt>Сайт</dt>
         <dd th:text="${entry.site}"></dd>
@@ -32,6 +35,48 @@
         <dt>Примечание</dt>
         <dd th:text="${entry.notes != null ? entry.notes : '-'}"></dd>
 
+        <!-- Теги записи (Фаза 2): чипы с отвязкой + форма привязки (datalist) -->
+        <dt>Теги</dt>
+        <dd>
+            <span th:if="${entry.tags.isEmpty()}" class="muted">—</span>
+            <span class="tag-badge" th:each="tag : ${entry.tags}">
+                <a th:href="@{/web/entries(tag=${tag.id})}" th:text="${tag.name}">tag</a>
+                <!-- Отвязка тега: мини-POST-форма (CSRF через th:action) -->
+                <form
+                    th:action="@{/web/entries/{id}/tags/{tagId}/delete(id=${entryId}, tagId=${tag.id})}"
+                    method="post"
+                    class="inline tag-chip-remove"
+                    data-confirm="Снять тег с записи?"
+                >
+                    <button
+                        type="submit"
+                        class="link"
+                        aria-label="Снять тег"
+                        >×</button
+                    >
+                </form>
+            </span>
+            <!-- Привязка по имени: существующий тег или новый -->
+            <form
+                th:action="@{/web/entries/{id}/tags(id=${entryId})}"
+                method="post"
+                class="tag-attach-form"
+            >
+                <input
+                    type="text"
+                    name="tagName"
+                    list="all-tags"
+                    maxlength="64"
+                    autocomplete="off"
+                    placeholder="Имя тега"
+                />
+                <datalist id="all-tags">
+                    <option th:each="t : ${allTags}" th:value="${t.name}"></option>
+                </datalist>
+                <button type="submit" class="small">Привязать</button>
+            </form>
+        </dd>
+
         <dt>Создана</dt>
         <dd th:text="${entry.createdAt != null ? #temporals.format(entry.createdAt, 'yyyy-MM-dd HH:mm') : '-'}"></dd>
 
@@ -41,8 +86,9 @@
 
     <div class="actions">
         <a class="button" th:href="@{/web/entries/{id}/edit(id=${entryId})}">Изменить</a>
+        <!-- Подтверждение — через data-confirm + main.js (без inline-JS, Фаза 2/A4) -->
         <form th:action="@{/web/entries/{id}/delete(id=${entryId})}" method="post" class="inline"
-              onsubmit="return confirm('Удалить запись?')">
+              data-confirm="Удалить запись?">
             <button type="submit" class="danger">Удалить</button>
         </form>
     </div>

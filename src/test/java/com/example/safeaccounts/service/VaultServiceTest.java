@@ -4,6 +4,7 @@ import com.example.safeaccounts.audit.AuditService;
 import com.example.safeaccounts.crypto.AesGcmCryptoService;
 import com.example.safeaccounts.domain.User;
 import com.example.safeaccounts.domain.VaultEntry;
+import com.example.safeaccounts.repository.TagRepository;
 import com.example.safeaccounts.repository.VaultEntryRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,6 +44,8 @@ class VaultServiceTest {
     @Mock
     VaultEntryRepository vaultEntryRepository;
     @Mock
+    TagRepository tagRepository;
+    @Mock
     AuditService auditService;
 
     AesGcmCryptoService cryptoService;
@@ -61,7 +64,13 @@ class VaultServiceTest {
         keyManager.afterPropertiesSet();
         cryptoService = new AesGcmCryptoService(keyManager);
         Clock fixedClock = Clock.fixed(NOW, ZoneOffset.UTC);
-        vaultService = new VaultService(vaultEntryRepository, cryptoService, auditService, fixedClock);
+        vaultService = new VaultService(vaultEntryRepository, tagRepository, cryptoService,
+                auditService, fixedClock);
+        // Батчевая загрузка тегов (Фаза 2) — по умолчанию «тегов нет»;
+        // lenient, т.к. не всем тестам этот вызов нужен.
+        org.mockito.Mockito.lenient()
+                .when(tagRepository.findTagsByEntryIds(any()))
+                .thenReturn(List.of());
 
         var dek = cryptoService.generateDek();
         var wrapped = cryptoService.wrapDek(dek);

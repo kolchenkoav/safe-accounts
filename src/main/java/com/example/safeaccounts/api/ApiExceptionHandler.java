@@ -21,8 +21,13 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 /**
  * Единая обработка ошибок API в формате RFC 7807 ProblemDetail.
  * Стектрейсы наружу не возвращаются; детали ошибок нейтральные.
+ * <p>
+ * Скоуп — только api-пакет (fix cycle 2): catch-all Exception.class больше
+ * не перехватывает web-контроллеры, где ошибки обрабатывает
+ * WebExceptionAdvice (flash + redirect). @RestController мета-аннотирован
+ * @Controller, поэтому фильтр по аннотации здесь не подходит.
  */
-@RestControllerAdvice
+@RestControllerAdvice(basePackageClasses = VaultController.class)
 public class ApiExceptionHandler {
 
     /**
@@ -144,6 +149,20 @@ public class ApiExceptionHandler {
         HttpStatus status = HttpStatus.CONFLICT;
         return ResponseEntity.status(status)
                 .body(ProblemDetail.forStatusAndDetail(status, neutralize(e.getMessage())));
+    }
+
+    /**
+     * Гонка параллельных созданий (UNIQUE user_id+name_lower и другие
+     * integrity-нарушения) в API — 409 Conflict с нейтральным текстом,
+     * без деталей (fix cycle 2: раньше падало в catch-all → 500).
+     */
+    @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
+    public ResponseEntity<ProblemDetail> handleDataIntegrity(
+            org.springframework.dao.DataIntegrityViolationException e) {
+        HttpStatus status = HttpStatus.CONFLICT;
+        return ResponseEntity.status(status)
+                .body(ProblemDetail.forStatusAndDetail(status,
+                        "Concurrent modification — repeat the request"));
     }
 
     /** Тег всё ещё привязан хотя бы к одной записи — 409 Conflict (RFC 7807). */

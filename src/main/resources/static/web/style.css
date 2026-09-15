@@ -275,3 +275,79 @@ a.button {
     gap: 1rem;
     align-items: center;
 }
+
+/* ==========================================================================
+   Теги (Фаза 2)
+   ========================================================================== */
+
+/* Чип тега: бейдж в ячейке «Название» и на карточке записи. */
+.tag-badge {
+    display: inline-block;
+    margin: 0.15rem 0.25rem 0.15rem 0;
+    padding: 0.08rem 0.55rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 0.8rem;
+    background: var(--input-bg);
+    color: var(--text);
+    text-decoration: none;
+    vertical-align: middle;
+}
+
+.tag-badge a {
+    color: var(--text);
+    text-decoration: none;
+}
+
+/* Кнопка «×» снятия тега на карточке записи. */
+.tag-chip-remove {
+    margin: 0 0 0 0.15rem;
+    padding: 0;
+}
+
+.tag-chip-remove .link {
+    color: inherit;
+    font-weight: 700;
+}
+
+/* Индикатор активного фильтра по тегу в списке записей. */
+.tag-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.8rem;
+    padding: 0.25rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--input-bg);
+}
+
+.tag-filter a {
+    color: var(--text);
+    text-decoration: none;
+    font-weight: 700;
+}
+
+/* Форма привязки тега на карточке записи. */
+.tag-attach-form {
+    display: inline-flex;
+    gap: 0.4rem;
+    align-items: center;
+    margin-top: 0.4rem;
+}
+
+.tag-attach-form input {
+    width: auto;
+    min-width: 160px;
+    margin-top: 0;
+}
+
+.muted {
+    opacity: 0.7;
+}
+
+/* Отложенный фикс B3: длинные значения (URL, логины) не ломают сетку таблицы. */
+th,
+td {
+    overflow-wrap: anywhere;
+}
