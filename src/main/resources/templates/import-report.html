@@ -57,10 +57,11 @@
         </tbody>
     </table>
 
-    <!-- Файл повторно НЕ подставляем: plaintext не храним в сессии -->
+    <!-- Файл повторно НЕ подставляем: plaintext не храним в сессии.
+         Ссылки параметризованы: user → /web/entries, admin → /web/admin/users -->
     <div class="actions">
-        <a class="button" th:href="@{/web/entries}">К записям</a>
-        <a class="button" th:href="@{/web/entries/import}">Импортировать ещё</a>
+        <a class="button" th:href="@{${reportBackUrl != null ? reportBackUrl : '/web/entries'}}">К записям</a>
+        <a class="button" th:href="@{${againUrl != null ? againUrl : '/web/entries/import'}}">Импортировать ещё</a>
     </div>
 </main>
 </body>

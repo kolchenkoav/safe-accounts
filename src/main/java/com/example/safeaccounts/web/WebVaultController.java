@@ -216,8 +216,10 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
                             @RequestParam("tagName") String tagName,
                             RedirectAttributes redirectAttributes) {
         try {
-            tagService.attachOrCreate(principal.user(), id, tagName);
-            redirectAttributes.addFlashAttribute("flashMessage", "Тег привязан");
+            TagService.AttachResult result =
+                    tagService.attachOrCreate(principal.user(), id, tagName);
+            redirectAttributes.addFlashAttribute("flashMessage",
+                    result.linked() ? "Тег привязан" : "Тег уже был привязан к записи");
         } catch (IllegalArgumentException e) {
             redirectAttributes.addFlashAttribute("flashError",
                     "Некорректное имя тега: буквы, цифры, пробел, _ - . (1–64 символа)");
@@ -236,8 +238,9 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
                             @PathVariable UUID tagId,
                             RedirectAttributes redirectAttributes) {
         try {
-            tagService.detach(principal.user(), id, tagId);
-            redirectAttributes.addFlashAttribute("flashMessage", "Тег снят с записи");
+            boolean removed = tagService.detach(principal.user(), id, tagId);
+            redirectAttributes.addFlashAttribute("flashMessage",
+                    removed ? "Тег снят" : "Тег не был привязан");
         } catch (VaultException e) {
             // Чужая/несуществующая запись — нейтральный 404 без деталей.
             throw new org.springframework.web.server.ResponseStatusException(
@@ -269,8 +272,8 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
                     "Экспорт невозможен: превышен лимит записей");
             return "redirect:/web/entries";
         }
-        String filename = "vault-" + safeFilenamePart(principal.getUsername())
-                + "-" + compactTimestamp(java.time.Instant.now()) + ".csv";
+        String filename = CsvFilenames.forUser(principal.getUsername(),
+                java.time.Instant.now());
         org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
         headers.setContentType(
                 org.springframework.http.MediaType.parseMediaType("text/csv; charset=utf-8"));
@@ -278,20 +281,25 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
                 "attachment; filename=\"" + filename + "\"");
         headers.add(EXPORT_WARNING_HEADER, EXPORT_WARNING_VALUE);
         headers.setContentLength(payload.csv().length);
+        // Plaintext-экспорт (CSV с открытыми паролями) не должен кэшироваться
+        // ни браузером, ни промежуточными прокси (TP A7).
+        headers.setCacheControl("no-store");
         return new org.springframework.http.ResponseEntity<>(payload.csv(), headers,
                 org.springframework.http.HttpStatus.OK);
     }
 
     /** Страница импорта CSV: предупреждение о plaintext + multipart-форма. */
     @GetMapping("/web/entries/import")
-    public String importPage() {
+    public String importPage(Model model) {
+        model.addAttribute("importAction", "/web/entries/import");
         return "import";
     }
 
     /**
-     * Импорт CSV в собственный сейф. Tomcat буферизует multipart-части во
-     * временные файлы work-директории (авто-очистка после запроса); в БД,
-     * логи и модель файл не попадает. Ошибки — flash + редирект (без 500).
+     * Импорт CSV в собственный сейф (PRG, Фаза 4): отчёт уходит во flash,
+     * ответ — 302 на GET /report. F5 повторяет только безопасный GET.
+     * Tomcat буферизует multipart-части во временные файлы work-директории
+     * (авто-очистка после запроса); в БД, логи и модель файл не попадает.
      */
     @PostMapping("/web/entries/import")
     public String importCsv(@AuthenticationPrincipal AuthUser principal,
@@ -299,8 +307,7 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
                             @RequestParam(defaultValue = "skip") String conflictStrategy,
                             @RequestParam(defaultValue = "false") boolean dryRun,
                             @RequestParam(defaultValue = "false") boolean failFast,
-                            RedirectAttributes redirectAttributes,
-                            Model model) throws java.io.IOException {
+                            RedirectAttributes redirectAttributes) throws java.io.IOException {
         try {
             // file == null невозможен: резолвер бросает
             // MissingServletRequestPartException раньше (→ WebExceptionAdvice)
@@ -311,16 +318,15 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
             ImportReport report = exportImportService.importFromCsv(
                     principal.user(), principal.user(), file.getBytes(),
                     strategy, dryRun, failFast);
-            model.addAttribute("report", report);
-            model.addAttribute("username", principal.getUsername());
-            return "import-report";
+            redirectAttributes.addFlashAttribute("importReport", report);
+            return "redirect:/web/entries/import/report";
         } catch (InvalidCsvException e) {
             redirectAttributes.addFlashAttribute("flashError",
                     "Не удалось разобрать CSV: " + e.getMessage());
             return "redirect:/web/entries/import";
         } catch (PayloadTooLargeException e) {
             redirectAttributes.addFlashAttribute("flashError",
-                    "Файл слишком большой: " + e.getMessage());
+                    WebErrorController.FILE_TOO_LARGE_MESSAGE);
             return "redirect:/web/entries/import";
         } catch (IllegalArgumentException e) {
             redirectAttributes.addFlashAttribute("flashError",
@@ -330,25 +336,24 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
     }
 
     /**
-     * Нейтральная часть имени файла из username: только [A-Za-z0-9._-]
-     * (тот же паттерн, что в api/VaultController).
+     * Отчёт импорта из flash (PRG). Прямой GET без flash (F5/ закладка) —
+     * назад на форму: повторного импорта не происходит.
      */
-    private static String safeFilenamePart(String value) {
-        if (value == null || value.isEmpty()) {
-            return "user";
+    @GetMapping("/web/entries/import/report")
+    public String importReport(Model model) {
+        ImportReport report = (ImportReport) model.asMap().get("importReport");
+        if (report == null) {
+            return "redirect:/web/entries/import";
         }
-        return value.replaceAll("[^A-Za-z0-9._-]", "_");
+        model.addAttribute("report", report);
+        return "import-report";
     }
 
-    /** ISO-8601 compact без «:» и «.» — как в REST. */
-    private static String compactTimestamp(java.time.Instant instant) {
-        return java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'")
-                .withZone(java.time.ZoneOffset.UTC)
-                .format(instant);
-    }
-
-    /** Парсинг conflictStrategy из формы (skip|upsert, default skip). */
-    private static ConflictStrategy parseConflictStrategy(String value) {
+    /**
+     * Парсинг conflictStrategy из формы (skip|upsert, default skip).
+     * Пакетный доступ: переиспользуется WebAdminController (TP A4 — дедуп).
+     */
+    static ConflictStrategy parseConflictStrategy(String value) {
         if (value == null || value.isBlank()) {
             return ConflictStrategy.SKIP;
         }

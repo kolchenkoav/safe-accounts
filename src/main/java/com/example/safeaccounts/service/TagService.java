@@ -228,7 +228,7 @@ public class TagService {
             // Тот же race-safe путь создания, что и в attachOrCreate:
             // INSERT через TagInsertHelper (REQUIRES_NEW), гонка UNIQUE
             // разрешается повторным find в здоровой транзакции.
-            resolved.add(findOrCreateTag(actor, name, "ENTRY_TAGS_REPLACED"));
+            resolved.add(findOrCreateTag(actor, name, "ENTRY_TAGS_REPLACED").tag());
         }
 
         entry.getTags().clear();
@@ -260,15 +260,45 @@ public class TagService {
      * @throws VaultException           NOT_FOUND, если записи нет или она чужая
      */
     @Transactional
-    public Tag attachOrCreate(User actor, UUID entryId, String rawName) {
+    public AttachResult attachOrCreate(User actor, UUID entryId, String rawName) {
         VaultEntry entry = requireOwnedEntry(actor, entryId);
-        Tag tag = findOrCreateTag(actor, rawName, "ENTRY_TAG_ATTACH");
+        TagResolution resolution = findOrCreateTag(actor, rawName, "ENTRY_TAG_ATTACH");
 
-        if (entry.getTags().add(tag)) {
+        boolean linked = entry.getTags().add(resolution.tag());
+        if (linked) {
             vaultEntryRepository.saveAndFlush(entry);
             recordEntryTagsChanged(actor, entryId, entry.getTags().size());
         }
-        return tag;
+        return new AttachResult(resolution.tag(), resolution.created(), linked);
+    }
+
+    /**
+     * Результат привязки тега (Фаза 4, точные flash-сообщения):
+     * сам тег + был ли он создан + была ли реально выполнена привязка
+     * (повторная привязка уже привязанного тега — no-op).
+     */
+    public record AttachResult(Tag tag, boolean created, boolean linked) {
+    }
+
+    /**
+     * Снимает тег с записи. Идемпотентно: тег, не привязанный к записи,
+     * ничего не меняет и аудита не пишет.
+     *
+     * @return был ли тег действительно привязан и снят (для точного flash)
+     * @throws VaultException NOT_FOUND, если записи нет или она чужая
+     */
+    @Transactional
+    public boolean detach(User actor, UUID entryId, UUID tagId) {
+        VaultEntry entry = requireOwnedEntry(actor, entryId);
+        if (tagId == null) {
+            return false;
+        }
+        boolean removed = entry.getTags().removeIf(t -> t.getId().equals(tagId));
+        if (removed) {
+            vaultEntryRepository.saveAndFlush(entry);
+            recordEntryTagsChanged(actor, entryId, entry.getTags().size());
+        }
+        return removed;
     }
 
     /**
@@ -287,12 +317,12 @@ public class TagService {
      *
      * @throws IllegalArgumentException если имя не проходит валидацию
      */
-    private Tag findOrCreateTag(User actor, String rawName, String via) {
+    private TagResolution findOrCreateTag(User actor, String rawName, String via) {
         String name = normalizeAndValidateName(rawName);
         String nameLower = name.toLowerCase(Locale.ROOT);
         Optional<Tag> existing = tagRepository.findByUser_IdAndNameLower(actor.getId(), nameLower);
         if (existing.isPresent()) {
-            return existing.get();
+            return new TagResolution(existing.get(), false);
         }
         Tag created;
         try {
@@ -304,7 +334,7 @@ public class TagService {
                     .orElseThrow(() -> e);
             log.info("Tag race resolved: actor={}, tagId={} (parallel create won)",
                     actor.getUsername(), winner.getId());
-            return winner;
+            return new TagResolution(winner, false);
         }
         Map<String, Object> createDetails = new LinkedHashMap<>();
         createDetails.put("actor", actor.getUsername());
@@ -315,26 +345,11 @@ public class TagService {
         auditService.record(actor, AuditService.TAG_CREATED, null,
                 "Tag", created.getId().toString(), createDetails);
         log.info("Tag created: actor={}, tagId={}", actor.getUsername(), created.getId());
-        return created;
+        return new TagResolution(created, true);
     }
 
-    /**
-     * Снимает тег с записи. Нетопотентно: тег, не привязанный к записи,
-     * ничего не меняет и аудита не пишет.
-     *
-     * @throws VaultException NOT_FOUND, если записи нет или она чужая
-     */
-    @Transactional
-    public void detach(User actor, UUID entryId, UUID tagId) {
-        VaultEntry entry = requireOwnedEntry(actor, entryId);
-        if (tagId == null) {
-            return;
-        }
-        boolean removed = entry.getTags().removeIf(t -> t.getId().equals(tagId));
-        if (removed) {
-            vaultEntryRepository.saveAndFlush(entry);
-            recordEntryTagsChanged(actor, entryId, entry.getTags().size());
-        }
+    /** Найденный или созданный тег + факт создания (для AttachResult). */
+    private record TagResolution(Tag tag, boolean created) {
     }
 
     /**

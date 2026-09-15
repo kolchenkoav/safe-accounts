@@ -41,9 +41,12 @@ spring:
       # MaxUploadSizeExceededException ловится ApiExceptionHandler → 413
       # (раньше REST /api/vault/import >11MB отдавал 500). Фильтров,
       # зависящих от раннего multipart-парсинга, в проекте нет (безопасно).
-      # Web-цепочка >11MB падает ещё в CsrfFilter (Tomcat парсит multipart
-      # при getParameter("_csrf")) — resolve-lazily это НЕ чинит, отложено
-      # на фазу 4/5 (ErrorController).
+      # Web-цепочка >11MB: фактический исход — 302 (advice при падении
+      # в Spring-резолвере; см. OversizeUploadIT, допускает 302|413).
+      # Tomcat error-page (ErrorPageConfig → /web/error/file-too-large) —
+      # страховка для случая, когда Spring-тип MaxUploadSizeExceededException
+      # не перехвачен advice; нативные исключения Tomcat из фильтров этим
+      # error-page не покрываются.
       resolve-lazily: true
 
 server:

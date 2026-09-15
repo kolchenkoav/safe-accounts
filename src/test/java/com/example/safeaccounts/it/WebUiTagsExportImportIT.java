@@ -68,6 +68,8 @@ class WebUiTagsExportImportIT {
     @Autowired
     UserRepository userRepository;
     @Autowired
+    com.example.safeaccounts.service.UserService userService;
+    @Autowired
     VaultEntryRepository vaultEntryRepository;
     @Autowired
     TagRepository tagRepository;
@@ -175,6 +177,11 @@ class WebUiTagsExportImportIT {
                 .orElseThrow().getId();
     }
 
+    /** Создает администратора напрямую через UserService (паттерн WebUiIT). */
+    private void createAdmin(String username) {
+        userService.register(username, PASSWORD, "ROLE_ADMIN");
+    }
+
     private static String html(MvcResult result)
             throws java.io.UnsupportedEncodingException {
         return result.getResponse().getContentAsString(StandardCharsets.UTF_8);
@@ -254,7 +261,7 @@ class WebUiTagsExportImportIT {
                         .with(csrf()))
                 .andExpect(status().is3xxRedirection())
                 .andExpect(redirectedUrl("/web/entries/" + entryId))
-                .andExpect(flash().attribute("flashMessage", "Тег снят с записи"));
+                .andExpect(flash().attribute("flashMessage", "Тег снят"));
 
         // Связь снята, сам тег остался (доступен на /web/tags)
         assertThat(entryTagIds(UUID.fromString(entryId))).isEmpty();
@@ -471,6 +478,22 @@ class WebUiTagsExportImportIT {
         return mockMvc.perform(builder.with(csrf())).andReturn();
     }
 
+    /** PRG-импорт (Фаза 4): POST → 302 на отчёт; follow GET — HTML отчёта. */
+    private String importReportHtml(org.springframework.mock.web.MockHttpSession session,
+                                    byte[] content, String strategy,
+                                    boolean dryRun, boolean failFast) throws Exception {
+        MvcResult post = performImport(session, content, strategy, dryRun, failFast);
+        assertThat(post.getResponse().getStatus())
+                .as("PRG: успешный POST-импорт обязан редиректить на отчёт")
+                .isEqualTo(302);
+        MvcResult reportGet = mockMvc.perform(get(post.getResponse().getHeader("Location"))
+                        .session(session))
+                .andExpect(status().isOk())
+                .andExpect(view().name("import-report"))
+                .andReturn();
+        return html(reportGet);
+    }
+
     @Test
     void exportCsvReturnsOwnEntriesWithWarningAndDisposition() throws Exception {
         registerUser("exporter");
@@ -552,10 +575,16 @@ class WebUiTagsExportImportIT {
                         .param("conflictStrategy", "skip")
                         .with(csrf())
                         .session(session))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/entries/import/report"))
+                .andReturn();
+        assertThat(report.getFlashMap().get("importReport")).isNotNull();
+        MvcResult reportGet = mockMvc.perform(get("/web/entries/import/report")
+                        .session(session))
                 .andExpect(status().isOk())
                 .andExpect(view().name("import-report"))
                 .andReturn();
-        String html = html(report);
+        String html = html(reportGet);
         assertThat(html).contains("data-metric=\"created\">2<");
         assertThat(html).contains("data-metric=\"failed\">0<");
 
@@ -574,10 +603,11 @@ class WebUiTagsExportImportIT {
         byte[] content = csv(CSV_HEADER,
                 "Скип-1,https://skip.example,u1,Pass-111,n1",
                 "Скип-2,https://skip.example,u2,Pass-222,n2");
-        performImport(session, content, "skip", false, false);
+        // Первый импорт с потреблением flash-отчёта (иначе второй GET отчёта
+        // получит СТАРЫЙ flash: pending FlashMap матчится по пути)
+        importReportHtml(session, content, "skip", false, false);
 
-        MvcResult second = performImport(session, content, "skip", false, false);
-        String html = html(second);
+        String html = importReportHtml(session, content, "skip", false, false);
         assertThat(html).contains("data-metric=\"created\">0<");
         assertThat(html).contains("data-metric=\"skipped\">2<");
 
@@ -592,13 +622,19 @@ class WebUiTagsExportImportIT {
         byte[] original = csv(CSV_HEADER,
                 "Апсерт-1,https://up.example,u1,Old-Pass-1,n1",
                 "Апсерт-2,https://up.example,u2,Old-Pass-2,n2");
-        performImport(session, original, "skip", false, false);
+        // Потребляем flash первого импорта follow-GET (см. skip-тест)
+        importReportHtml(session, original, "skip", false, false);
 
         byte[] changed = csv(CSV_HEADER,
                 "Апсерт-1,https://up.example,u1,New-Pass-1,n1",
                 "Апсерт-2,https://up.example,u2,New-Pass-2,n2");
         MvcResult report = performImport(session, changed, "upsert", false, false);
-        assertThat(html(report)).contains("data-metric=\"updated\">2<");
+        assertThat(report.getResponse().getStatus()).isEqualTo(302);
+        MvcResult reportGet = mockMvc.perform(get("/web/entries/import/report")
+                        .session(session))
+                .andExpect(status().isOk())
+                .andReturn();
+        assertThat(html(reportGet)).contains("data-metric=\"updated\">2<");
 
         // Дублей не появилось: по-прежнему 2 записи
         long count = transactionTemplate.execute(tx -> vaultEntryRepository.count());
@@ -614,7 +650,12 @@ class WebUiTagsExportImportIT {
                 "Драй-2,https://dry.example,u2,Pass-222,n2");
 
         MvcResult report = performImport(session, content, "skip", true, false);
-        String html = html(report);
+        assertThat(report.getResponse().getStatus()).isEqualTo(302);
+        MvcResult reportGet = mockMvc.perform(get("/web/entries/import/report")
+                        .session(session))
+                .andExpect(status().isOk())
+                .andReturn();
+        String html = html(reportGet);
         assertThat(html).contains("dry-run");
         assertThat(html).contains("data-metric=\"created\">2<");
 
@@ -630,8 +671,7 @@ class WebUiTagsExportImportIT {
                 "Валидная,https://ok.example,u1,Pass-111,n1",
                 "Пустой-пароль,https://bad.example,u2,,n2");
 
-        MvcResult report = performImport(session, content, "skip", false, false);
-        String html = html(report);
+        String html = importReportHtml(session, content, "skip", false, false);
         assertThat(html).contains("data-metric=\"created\">1<");
         assertThat(html).contains("data-metric=\"failed\">1<");
         // Номер строки с ошибкой — в таблице ошибок отчёта
@@ -693,17 +733,11 @@ class WebUiTagsExportImportIT {
     void importGarbageWithoutFailFastRendersReportWithFileErrorNot500() throws Exception {
         registerUser("importjunk2");
         var session = login("importjunk2");
-        // Одноколоночный «заголовок» без failFast → отчёт с ошибкой уровня файла
+        // Одноколоночный «заголовок»: без failFast сервис гасит ошибку
+        // уровня файла в отчёт → PRG → отчёт с failed=1
         byte[] garbage = "not a csv at all".getBytes(StandardCharsets.UTF_8);
-        mockMvc.perform(multipart("/web/entries/import")
-                        .file(new org.springframework.mock.web.MockMultipartFile(
-                                "file", "junk.csv", "text/csv", garbage))
-                        .with(csrf())
-                        .session(session))
-                .andExpect(status().isOk())
-                .andExpect(view().name("import-report"))
-                .andExpect(content().string(
-                        org.hamcrest.Matchers.containsString("data-metric=\"failed\">1<")));
+        String html = importReportHtml(session, garbage, "skip", false, false);
+        assertThat(html).contains("data-metric=\"failed\">1<");
     }
 
     // -- TP-фиксы фазы 3 ---------------------------------------------------------
@@ -735,8 +769,13 @@ class WebUiTagsExportImportIT {
         registerUser("importheader");
         var session = login("importheader");
         MvcResult report = performImport(session, csv(CSV_HEADER), "skip", false, false);
-        assertThat(html(report)).contains("data-metric=\"total\">0<");
-        assertThat(html(report)).contains("data-metric=\"created\">0<");
+        assertThat(report.getResponse().getStatus()).isEqualTo(302);
+        MvcResult reportGet = mockMvc.perform(get("/web/entries/import/report")
+                        .session(session))
+                .andExpect(status().isOk())
+                .andReturn();
+        assertThat(html(reportGet)).contains("data-metric=\"total\">0<");
+        assertThat(html(reportGet)).contains("data-metric=\"created\">0<");
     }
 
     @Test
@@ -755,5 +794,133 @@ class WebUiTagsExportImportIT {
                 StandardCharsets.UTF_8).trim();
         // Header-only: ровно строка заголовка и ничего больше
         assertThat(body).isEqualTo(CSV_HEADER);
+    }
+
+    // -- PRG: F5-безопасность (Фаза 4) -------------------------------------------
+
+    @Test
+    void importReportGetWithoutFlashRedirectsToForm() throws Exception {
+        registerUser("f5user");
+        var session = login("f5user");
+        // Прямой GET отчёта без предшествующего POST (F5/закладка) — на форму
+        mockMvc.perform(get("/web/entries/import/report").session(session))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/entries/import"));
+    }
+
+    // -- Фаза 4: админ CSV export/import -----------------------------------------
+
+    @Test
+    void adminExportCsvTargetsUserVaultWithVaultUserFilename() throws Exception {
+        registerUser("adm-target");
+        var targetSession = login("adm-target");
+        createEntry(targetSession, "Целевая-запись");
+        createAdmin("adm-exporter");
+        var adminSession = login("adm-exporter");
+        createEntry(adminSession, "Запись-админа");
+
+        MvcResult result = mockMvc.perform(get("/web/admin/users/"
+                        + userIdOf("adm-target") + "/vault/export")
+                        .session(adminSession))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith("text/csv"))
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("vault-user-")))
+                .andReturn();
+        String body = new String(result.getResponse().getContentAsByteArray(),
+                StandardCharsets.UTF_8);
+        assertThat(body).contains("Целевая-запись");
+        // Записи самого админа в чужой экспорт не попадают
+        assertThat(body).doesNotContain("Запись-админа");
+    }
+
+    @Test
+    void nonAdminForbiddenOnAdminVaultExport() throws Exception {
+        registerUser("plainexporter");
+        registerUser("exportvictim");
+        var plainSession = login("plainexporter");
+
+        mockMvc.perform(get("/web/admin/users/"
+                        + userIdOf("exportvictim") + "/vault/export")
+                        .session(plainSession))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void adminExportUnknownUserShowsFlashAndRedirects() throws Exception {
+        createAdmin("adm-unknown");
+        var adminSession = login("adm-unknown");
+
+        mockMvc.perform(get("/web/admin/users/" + UUID.randomUUID() + "/vault/export")
+                        .session(adminSession))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/admin/users"))
+                .andExpect(flash().attribute("flashError", "Пользователь не найден"));
+    }
+
+    @Test
+    void adminImportCreatesEntriesForTargetUser() throws Exception {
+        registerUser("adm-imp-target");
+        createAdmin("adm-importer");
+        var adminSession = login("adm-importer");
+        UUID targetId = userIdOf("adm-imp-target");
+
+        byte[] content = csv(CSV_HEADER,
+                "Админ-импорт-1,https://ai1.example,u1,Pass-111,n1",
+                "Админ-импорт-2,https://ai2.example,u2,Pass-222,n2");
+        mockMvc.perform(multipart("/web/admin/users/" + targetId + "/vault/import")
+                        .file(new org.springframework.mock.web.MockMultipartFile(
+                                "file", "test.csv", "text/csv", content))
+                        .param("conflictStrategy", "skip")
+                        .with(csrf())
+                        .session(adminSession))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl(
+                        "/web/admin/users/" + targetId + "/vault/import/report"));
+
+        mockMvc.perform(get("/web/admin/users/" + targetId + "/vault/import/report")
+                        .session(adminSession))
+                .andExpect(status().isOk())
+                .andExpect(view().name("import-report"))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("data-metric=\"created\">2<")));
+
+        // Записи появились именно у target
+        var targetSession = login("adm-imp-target");
+        mockMvc.perform(get("/web/entries").session(targetSession))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Админ-импорт-1")))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Админ-импорт-2")));
+    }
+
+    @Test
+    void adminImportDryRunChangesNothingForTarget() throws Exception {
+        registerUser("adm-dry-target");
+        createAdmin("adm-dry-admin");
+        var adminSession = login("adm-dry-admin");
+        UUID targetId = userIdOf("adm-dry-target");
+
+        byte[] content = csv(CSV_HEADER,
+                "Драй-админ,https://dry-admin.example,u1,Pass-111,n1");
+        mockMvc.perform(multipart("/web/admin/users/" + targetId + "/vault/import")
+                        .file(new org.springframework.mock.web.MockMultipartFile(
+                                "file", "test.csv", "text/csv", content))
+                        .param("conflictStrategy", "skip")
+                        .param("dryRun", "true")
+                        .with(csrf())
+                        .session(adminSession))
+                .andExpect(status().is3xxRedirection());
+        mockMvc.perform(get("/web/admin/users/" + targetId + "/vault/import/report")
+                        .session(adminSession))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("data-metric=\"created\">1<")));
+
+        // У target ничего не изменилось
+        var targetSession = login("adm-dry-target");
+        mockMvc.perform(get("/web/entries").session(targetSession))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Записей пока нет")));
     }
 }

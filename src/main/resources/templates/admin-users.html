@@ -123,6 +123,23 @@
                                     Сбросить пароль
                                 </button>
                             </form>
+                            <!-- CSV-действия (Фаза 4): компактно, без разъезда вёрстки -->
+                            <form
+                                class="inline"
+                                th:action="@{/web/admin/users/{id}/vault/export(id=${u.id})}"
+                                method="get"
+                                data-confirm="CSV будет содержать пароли в открытом виде. Продолжить?"
+                            >
+                                <label class="checkbox compact"
+                                    ><input type="checkbox" name="bom" value="true" /> BOM</label
+                                >
+                                <button type="submit" class="small">Экспорт CSV</button>
+                            </form>
+                            <a
+                                class="small-link"
+                                th:href="@{/web/admin/users/{id}/vault/import(id=${u.id})}"
+                                >Импорт CSV</a
+                            >
                         </td>
                     </tr>
                 </tbody>

@@ -1,11 +1,18 @@
 package com.example.safeaccounts.web;
 
 import com.example.safeaccounts.domain.User;
+import com.example.safeaccounts.repository.UserRepository;
 import com.example.safeaccounts.security.AuthUser;
 import com.example.safeaccounts.service.AdminService;
 import com.example.safeaccounts.service.AdminServiceException;
 import com.example.safeaccounts.service.AuthServiceException;
 import com.example.safeaccounts.service.KeyRotationException;
+import com.example.safeaccounts.service.VaultExportImportService;
+import com.example.safeaccounts.service.csv.ConflictStrategy;
+import com.example.safeaccounts.service.csv.ExportPayload;
+import com.example.safeaccounts.service.csv.ImportReport;
+import com.example.safeaccounts.service.csv.InvalidCsvException;
+import com.example.safeaccounts.service.csv.PayloadTooLargeException;
 import org.springframework.data.domain.Page;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.stereotype.Controller;
@@ -47,9 +54,15 @@ public class WebAdminController {
             "Операция отклонена: нельзя изменить роль собственной учетной записи";
 
     private final AdminService adminService;
+    private final VaultExportImportService exportImportService;
+    private final UserRepository userRepository;
 
-    public WebAdminController(AdminService adminService) {
+    public WebAdminController(AdminService adminService,
+                              VaultExportImportService exportImportService,
+                              UserRepository userRepository) {
         this.adminService = adminService;
+        this.exportImportService = exportImportService;
+        this.userRepository = userRepository;
     }
 
     // -- пользователи ----------------------------------------------------------
@@ -163,6 +176,123 @@ public class WebAdminController {
             redirectAttributes.addFlashAttribute("flashError", "Пользователь не найден");
         }
         return "redirect:/web/admin/users";
+    }
+
+    // -- CSV export/import чужого сейфа (Фаза 4) ---------------------------------
+
+    /**
+     * Экспорт сейфа пользователя администратором: те же заголовки, что у
+     * пользовательского экспорта, но имя файла vault-user-<username>-...csv.
+     * Аудит VAULT_EXPORTED (actor=admin, target) пишет сервис.
+     */
+    @GetMapping("/web/admin/users/{id}/vault/export")
+    public Object exportVault(@AuthenticationPrincipal AuthUser principal,
+                              @PathVariable UUID id,
+                              @RequestParam(defaultValue = "false") boolean bom,
+                              RedirectAttributes redirectAttributes) {
+        User target = userRepository.findById(id).orElse(null);
+        if (target == null) {
+            redirectAttributes.addFlashAttribute("flashError", "Пользователь не найден");
+            return "redirect:/web/admin/users";
+        }
+        ExportPayload payload;
+        try {
+            payload = exportImportService.export(principal.user(), target, bom);
+        } catch (PayloadTooLargeException e) {
+            redirectAttributes.addFlashAttribute("flashError",
+                    "Экспорт невозможен: превышен лимит записей");
+            return "redirect:/web/admin/users";
+        }
+        String filename = CsvFilenames.forTargetUser(target.getUsername(), Instant.now());
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.setContentType(
+                org.springframework.http.MediaType.parseMediaType("text/csv; charset=utf-8"));
+        headers.set(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
+                "attachment; filename=\"" + filename + "\"");
+        // Заголовки-предупреждения — те же константы, что в user-экспорте (TP A4)
+        headers.add(WebVaultController.EXPORT_WARNING_HEADER,
+                WebVaultController.EXPORT_WARNING_VALUE);
+        headers.setContentLength(payload.csv().length);
+        // Plaintext-экспорт (CSV с открытыми паролями) не должен кэшироваться
+        // ни браузером, ни промежуточными прокси (TP A7).
+        headers.setCacheControl("no-store");
+        return new org.springframework.http.ResponseEntity<>(payload.csv(), headers,
+                org.springframework.http.HttpStatus.OK);
+    }
+
+    /** Страница импорта CSV в чужой сейф (переиспользуется import.html). */
+    @GetMapping("/web/admin/users/{id}/vault/import")
+    public String importPage(@PathVariable UUID id,
+                             Model model,
+                             RedirectAttributes redirectAttributes) {
+        User target = userRepository.findById(id).orElse(null);
+        if (target == null) {
+            redirectAttributes.addFlashAttribute("flashError", "Пользователь не найден");
+            return "redirect:/web/admin/users";
+        }
+        model.addAttribute("targetUsername", target.getUsername());
+        model.addAttribute("importAction", "/web/admin/users/" + id + "/vault/import");
+        model.addAttribute("againUrl", "/web/admin/users/" + id + "/vault/import");
+        model.addAttribute("reportBackUrl", "/web/admin/users");
+        return "import";
+    }
+
+    /**
+     * Импорт CSV в сейф пользователя (PRG, Фаза 4): отчёт — во flash,
+     * ответ — 302 на GET .../report. Аудит VAULT_IMPORTED (actor=admin,
+     * target) пишет сервис; файл нигде не сохраняется, CSV в логи не пишется.
+     */
+    @PostMapping("/web/admin/users/{id}/vault/import")
+    public String importCsv(@AuthenticationPrincipal AuthUser principal,
+                            @PathVariable UUID id,
+                            @RequestParam("file") org.springframework.web.multipart.MultipartFile file,
+                            @RequestParam(defaultValue = "skip") String conflictStrategy,
+                            @RequestParam(defaultValue = "false") boolean dryRun,
+                            @RequestParam(defaultValue = "false") boolean failFast,
+                            RedirectAttributes redirectAttributes) throws java.io.IOException {
+        User target = userRepository.findById(id).orElse(null);
+        if (target == null) {
+            redirectAttributes.addFlashAttribute("flashError", "Пользователь не найден");
+            return "redirect:/web/admin/users";
+        }
+        String importForm = "redirect:/web/admin/users/" + id + "/vault/import";
+        try {
+            if (file.isEmpty()) {
+                throw new InvalidCsvException("CSV file is empty");
+            }
+            // Тот же парсер, что в user-импорте (TP A4 — дедуп switch-блока)
+            ConflictStrategy strategy = WebVaultController.parseConflictStrategy(conflictStrategy);
+            ImportReport report = exportImportService.importFromCsv(
+                    principal.user(), target, file.getBytes(), strategy, dryRun, failFast);
+            redirectAttributes.addFlashAttribute("importReport", report);
+            return "redirect:/web/admin/users/" + id + "/vault/import/report";
+        } catch (InvalidCsvException e) {
+            redirectAttributes.addFlashAttribute("flashError",
+                    "Не удалось разобрать CSV: " + e.getMessage());
+            return importForm;
+        } catch (PayloadTooLargeException e) {
+            redirectAttributes.addFlashAttribute("flashError",
+                    WebErrorController.FILE_TOO_LARGE_MESSAGE);
+            return importForm;
+        } catch (IllegalArgumentException e) {
+            redirectAttributes.addFlashAttribute("flashError",
+                    "Некорректные параметры импорта");
+            return importForm;
+        }
+    }
+
+    /** Отчёт админского импорта из flash (PRG); без flash — на форму. */
+    @GetMapping("/web/admin/users/{id}/vault/import/report")
+    public String importReport(@PathVariable UUID id,
+                               Model model) {
+        ImportReport report = (ImportReport) model.asMap().get("importReport");
+        if (report == null) {
+            return "redirect:/web/admin/users/" + id + "/vault/import";
+        }
+        model.addAttribute("report", report);
+        model.addAttribute("againUrl", "/web/admin/users/" + id + "/vault/import");
+        model.addAttribute("reportBackUrl", "/web/admin/users");
+        return "import-report";
     }
 
     // -- аудит ------------------------------------------------------------------

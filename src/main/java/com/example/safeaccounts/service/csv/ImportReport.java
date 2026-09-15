@@ -1,6 +1,7 @@
 package com.example.safeaccounts.service.csv;
 
 import java.time.Instant;
+import java.io.Serializable;
 import java.util.List;
 
 /**
@@ -23,5 +24,8 @@ public record ImportReport(int totalRows,
                            int failed,
                            List<ImportError> errors,
                            Instant importedAt,
-                           boolean dryRun) {
+                           boolean dryRun) implements Serializable {
+    // Serializable: отчёт кладётся во flash-атрибуты сессии (PRG, Фаза 4);
+    // serialVersionUID для record не обязателен и игнорируется
+    // механизмом сериализации записей.
 }

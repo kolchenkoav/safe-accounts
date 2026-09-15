@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru" data-theme="dark">
+<!-- Каркас <head> (включая theme.js/main.js) — общий фрагмент -->
+<head th:replace="~{fragments :: pageHead('Файл слишком большой — safe-accounts')}"></head>
+<body>
+<nav>
+    <a th:href="@{/web/entries}">&larr; К записям</a>
+    <!-- Тема: тёмная/светлая, выбор в localStorage (тёмная по умолчанию) -->
+    <button type="button" th:replace="~{fragments :: themeToggle}"></button>
+</nav>
+
+<main class="card">
+    <h1>Импорт не выполнен</h1>
+
+    <!-- Нейтральное сообщение без стектрейса; единая формулировка TP A2 -->
+    <div class="alert alert-warning" th:text="${message}">Файл слишком большой</div>
+
+    <div class="actions">
+        <a class="button" th:href="@{/web/entries/import}">К форме импорта</a>
+        <a class="button" th:href="@{/web/entries}">К записям</a>
+        <a class="button" th:if="${isAdmin}" th:href="@{/web/admin/users}"
+            >К списку пользователей</a
+        >
+    </div>
+</main>
+</body>
+</html>

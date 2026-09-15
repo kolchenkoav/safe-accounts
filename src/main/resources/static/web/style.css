@@ -359,6 +359,18 @@ input[type="file"] {
     color: var(--alert-warning-text);
 }
 
+/* Компактный чекбокс/ссылка в «Действиях» админки (Фаза 4). */
+label.checkbox.compact {
+    margin-top: 0;
+    margin-right: 0.3rem;
+    font-size: 0.85rem;
+}
+
+.small-link {
+    font-size: 0.85rem;
+    margin-right: 0.4rem;
+}
+
 .pagination {
     margin-top: 1rem;
     display: flex;

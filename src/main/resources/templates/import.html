@@ -15,6 +15,11 @@
     <div class="alert alert-info" th:if="${flashMessage}" th:text="${flashMessage}"></div>
     <div class="alert alert-error" th:if="${flashError}" th:text="${flashError}"></div>
 
+    <!-- Баннер админского импорта (Фаза 4): целевой аккаунт -->
+    <div class="alert alert-info" th:if="${targetUsername != null}">
+        Импорт в аккаунт <strong th:text="${targetUsername}">user</strong>
+    </div>
+
     <!-- Предупреждение о plaintext-паролях и поведении upsert (план 2.5) -->
     <div class="alert alert-warning">
         CSV содержит пароли в открытом виде; при upsert существующие записи
@@ -23,8 +28,9 @@
 
     <!-- multipart-форма; Tomcat буферизует части во временные файлы work-директории
          (авто-очистка после запроса); в БД/логи/модель файл не попадает.
-         Формат: name,url,username,password,note (RFC 4180, UTF-8). -->
-    <form th:action="@{/web/entries/import}" method="post" enctype="multipart/form-data">
+         Формат: name,url,username,password,note (RFC 4180, UTF-8).
+         importAction — свой URL для user/admin вариантов (задают контроллеры). -->
+    <form th:action="@{${importAction}}" method="post" enctype="multipart/form-data">
         <label for="file">CSV-файл</label>
         <input type="file" id="file" name="file" accept=".csv" required />
 

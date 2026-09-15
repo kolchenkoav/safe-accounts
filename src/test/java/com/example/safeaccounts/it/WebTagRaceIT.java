@@ -276,7 +276,7 @@ class WebTagRaceIT {
             // requireOwnedEntry + find (both before the INSERT).
             releaser.schedule(commit::countDown, 1500, TimeUnit.MILLISECONDS);
 
-            Tag result = null;
+            com.example.safeaccounts.service.TagService.AttachResult result = null;
             Throwable failure = null;
             try {
                 result = tagService.attachOrCreate(actor, UUID.fromString(entryId), tagName);
@@ -284,7 +284,7 @@ class WebTagRaceIT {
                 failure = t;
             }
             System.out.println("[WebTagRaceIT] deterministic outcome: "
-                    + (failure == null ? "OK, tagId=" + result.getId() : describe(failure)));
+                    + (failure == null ? "OK, tagId=" + result.tag().getId() : describe(failure)));
             blocker.get(60, TimeUnit.SECONDS);
 
             assertThat(failure)
@@ -292,7 +292,7 @@ class WebTagRaceIT {
                             failure == null ? "OK" : describe(failure))
                     .isNull();
             assertThat(result).isNotNull();
-            assertThat(result.getId())
+            assertThat(result.tag().getId())
                     .as("loser must reuse the winner tag")
                     .isEqualTo(winnerTag.getId());
         } finally {

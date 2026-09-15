@@ -21,6 +21,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -125,5 +127,108 @@ class OversizeUploadIT {
                 .as("normal-size CSV must not be rejected as too large")
                 .isEqualTo(200);
         assertThat(response.getBody()).contains("totalRows");
+    }
+
+    // -- Фаза 4: web-цепочка >11MB → error-page вместо whitelabel ----------------
+
+    /**
+     * Web-сценарий на реальном Tomcat: POST /web/entries/import с файлом
+     * >11 МБ. CsrfFilter читает _csrf из multipart → Tomcat парсит тело →
+     * MaxUploadSizeExceededException ДО DispatcherServlet (advice мёртв).
+     * ErrorPageConfig (Tomcat error-page) диспатчит на
+     * /web/error/file-too-large: осознанно отвечаем 413 с тематической
+     * HTML-страницей — whitelabel-500 больше нет.
+     */
+    @Test
+    void oversizeWebImportShowsErrorPageNotWhitelabel() throws Exception {
+        String username = "web-big-user";
+        HttpHeaders json = new HttpHeaders();
+        json.setContentType(MediaType.APPLICATION_JSON);
+        rest.exchange("/api/auth/register", HttpMethod.POST,
+                new HttpEntity<>("{\"username\":\"%s\",\"password\":\"%s\"}"
+                        .formatted(username, PASSWORD), json), String.class);
+
+        // Сессия + CSRF из реальной формы логина (cookie вручную: TestRestTemplate
+        // не хранит состояние)
+        ResponseEntity<String> loginPage = rest.getForEntity("/web/login", String.class);
+        String csrf = extractCsrf(loginPage.getBody());
+        String cookie = sessionCookie(loginPage);
+        assertThat(cookie).as("JSESSIONID on login page").isNotNull();
+
+        HttpHeaders form = new HttpHeaders();
+        form.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+        form.add(HttpHeaders.COOKIE, cookie);
+        ResponseEntity<String> login = rest.exchange("/web/login", HttpMethod.POST,
+                new HttpEntity<>("_csrf=" + csrf + "&username=" + username
+                        + "&password=" + PASSWORD, form), String.class);
+        assertThat(login.getStatusCode().value()).isEqualTo(302);
+        String session = sessionCookie(login) != null ? sessionCookie(login) : cookie;
+
+        byte[] big = new byte[11_500_000];
+        Arrays.fill(big, (byte) 'x');
+        HttpHeaders multipartHeaders = new HttpHeaders();
+        multipartHeaders.setContentType(MediaType.MULTIPART_FORM_DATA);
+        multipartHeaders.add(HttpHeaders.COOKIE, session);
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("file", new ByteArrayResource(big) {
+            @Override
+            public String getFilename() {
+                return "big.csv";
+            }
+        });
+        // Именно чтение _csrf из multipart триггерит ранний Tomcat-парсинг
+        body.add("_csrf", csrf);
+        body.add("conflictStrategy", "skip");
+
+        ResponseEntity<String> response = rest.exchange("/web/entries/import",
+                HttpMethod.POST, new HttpEntity<>(body, multipartHeaders), String.class);
+
+        // Никакого whitelabel-500. Два допустимых исхода (зависит от того, где
+        // именно упал multipart-парсинг):
+        //  1) 302 — Spring-резолвер у контроллера → WebExceptionAdvice →
+        //     PRG-flash «Файл слишком большой (лимит 10 МБ)...» на форму;
+        //  2) 413 — Tomcat упал раньше (фильтр) → error-dispatch на
+        //     /web/error/file-too-large (тематическая HTML-страница).
+        int code = response.getStatusCode().value();
+        assertThat(code)
+                .as("oversized web import must not produce whitelabel-500")
+                .isIn(302, 413);
+        if (code == 302) {
+            // НЕ редирект на логин (сессия валидна), а на форму импорта
+            assertThat(response.getHeaders().getLocation().getPath())
+                    .isEqualTo("/web/entries/import");
+            HttpHeaders followHeaders = new HttpHeaders();
+            followHeaders.add(HttpHeaders.COOKIE, session);
+            ResponseEntity<String> formPage = rest.exchange("/web/entries/import",
+                    HttpMethod.GET, new HttpEntity<>(followHeaders), String.class);
+            assertThat(formPage.getBody()).contains("10 МБ");
+        } else {
+            assertThat(response.getBody()).contains("10 МБ");
+        }
+    }
+
+    private static String sessionCookie(ResponseEntity<?> response) {
+        var cookies = response.getHeaders().get(HttpHeaders.SET_COOKIE);
+        if (cookies == null) {
+            return null;
+        }
+        // Последний JSESSIONID: после логина Spring Security меняет id сессии
+        // (защита от session fixation) — актуальная кука приходит последней
+        String latest = null;
+        for (String cookie : cookies) {
+            if (cookie.startsWith("JSESSIONID")) {
+                latest = cookie.split(";", 2)[0];
+            }
+        }
+        return latest;
+    }
+
+    private static String extractCsrf(String html) {
+        Matcher matcher = Pattern.compile("name=\"_csrf\"\\s+value=\"([^\"]+)\"")
+                .matcher(html);
+        if (!matcher.find()) {
+            throw new IllegalStateException("_csrf not found on login page");
+        }
+        return matcher.group(1);
     }
 }

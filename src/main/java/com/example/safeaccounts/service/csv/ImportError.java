@@ -1,5 +1,7 @@
 package com.example.safeaccounts.service.csv;
 
+import java.io.Serializable;
+
 /**
  * Описание одной ошибки импорта. Попадает в {@link ImportReport#errors()}.
  * Никаких чувствительных данных (расшифрованных паролей/имен/логинов);
@@ -9,5 +11,5 @@ package com.example.safeaccounts.service.csv;
  *               0 — для ошибок уровня всего файла (например, превышение лимита строк)
  * @param reason короткая нечувствительная причина отказа
  */
-public record ImportError(int row, String reason) {
+public record ImportError(int row, String reason) implements Serializable {
 }

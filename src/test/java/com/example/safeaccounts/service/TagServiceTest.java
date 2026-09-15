@@ -78,10 +78,13 @@ class TagServiceTest {
         when(insertHelper.insert(any(Tag.class)))
                 .thenThrow(new DataIntegrityViolationException("duplicate key"));
 
-        Tag result = tagService.attachOrCreate(actor, entry.getId(), "work");
+        TagService.AttachResult result = tagService.attachOrCreate(actor, entry.getId(), "work");
 
-        // Гонка разрешена переиспользованием: без исключений, тег привязан
-        assertThat(result.getId()).isEqualTo(parallelWinner.getId());
+        // Гонка разрешена переиспользованием: без исключений, тег привязан;
+        // победивший тег существовал (created=false) и привязка реальна (linked=true)
+        assertThat(result.tag().getId()).isEqualTo(parallelWinner.getId());
+        assertThat(result.created()).isFalse();
+        assertThat(result.linked()).isTrue();
         assertThat(entry.getTags()).containsExactly(parallelWinner);
         verify(vaultEntryRepository).saveAndFlush(entry);
     }
