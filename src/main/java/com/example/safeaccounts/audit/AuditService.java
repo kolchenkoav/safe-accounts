@@ -49,7 +49,11 @@ public class AuditService {
     public static final String SECRET_CREATED = "SECRET_CREATED";
     public static final String SECRET_UPDATED = "SECRET_UPDATED";
     public static final String SECRET_DELETED = "SECRET_DELETED";
-    public static final String SECRET_REVEALED = "SECRET_REVEALED";
+public static final String SECRET_REVEALED = "SECRET_REVEALED";
+
+    /** Экспорт/импорт сейфа в CSV (Task-07 / Task-08). Агрегаты, без CSV/расшифрованных значений. */
+    public static final String VAULT_EXPORTED = "VAULT_EXPORTED";
+    public static final String VAULT_IMPORTED = "VAULT_IMPORTED";
 
     /** Административные события (Task-06). В details — только имена/счетчики/key id. */
     public static final String USER_CREATED_BY_ADMIN = "USER_CREATED_BY_ADMIN";
