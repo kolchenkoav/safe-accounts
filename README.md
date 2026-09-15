@@ -149,6 +149,8 @@ docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --build
 | `SPRING_PROFILES_ACTIVE` | Профиль: `default`, `docker` или `dev` |
 | `APP_RATE_LIMIT_WINDOW_SECONDS` | Окно rate limiter'а в секундах (по умолчанию `60`) |
 | `APP_RATE_LIMIT_MAX_REQUESTS` | Максимум запросов на IP за окно (по умолчанию `10`) |
+| `app.vault.import.rate-limit.window-seconds` | Окно rate-limit'а импорта в секундах (по умолчанию `60`) |
+| `app.vault.import.rate-limit.max-requests` | Максимум импортов на IP за окно (по умолчанию `3`) |
 | `APP_HSTS_ENABLED` | Strict-Transport-Security (`true` за TLS-терминацией) |
 | `APP_API_DOCS_ENABLED` | Swagger/OpenAPI (`true` только в dev) |
 | `APP_DEV_PROFILE` | dev-профиль (открывает Swagger; в проде — запрещено) |
@@ -241,9 +243,13 @@ docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --build
 - **Rate limiting**: in-memory лимитер по IP (скользящее окно) на
   `POST /api/auth/login` и `POST /api/auth/register`;
   по умолчанию 10 запросов/60 с на IP; превышение — `429` в формате
-  RFC 7807 ProblemDetail с заголовком `Retry-After`. При горизонтальном
-  масштабировании требуется распределенный лимитер (например, Redis) —
-  текущая реализация действует на каждый инстанс отдельно.
+  RFC 7807 ProblemDetail с заголовком `Retry-After`. На
+  `POST /api/vault/import` действует отдельный, более строгий лимит:
+  3 запроса/60 с на IP (`app.vault.import.rate-limit.{window-seconds:60,
+  max-requests:3}`) — импорт дороже обычных операций и обращается с
+  большим числом записей сразу. При горизонтальном масштабировании
+  требуется распределенный лимитер (например, Redis) — текущая
+  реализация действует на каждый инстанс отдельно.
 - **Безопасные заголовки**: `X-Content-Type-Options: nosniff`,
   `X-Frame-Options: DENY`, `Cache-Control: no-store` на всех ответах;
   `Strict-Transport-Security` включается флагом `APP_HSTS_ENABLED=true`
@@ -363,6 +369,80 @@ curl "http://localhost:8080/api/vault/<id>?reveal=true" -H "Authorization: Beare
 - Аудит: SECRET_CREATED / SECRET_UPDATED / SECRET_DELETED / SECRET_REVEALED
   (только идентификаторы записей, без секретов).
 - Ошибка расшифровки возвращает нейтральный ProblemDetail без деталей.
+
+#### Сейф — CSV Export/Import
+
+Импорт/экспорт в формате Chrome Password Manager CSV
+(`name,url,username,password,note`, 5 колонок, RFC 4180) для миграции между
+`safe-accounts` и браузером/другим сейфом. Теги в CSV **не входят** —
+формат Chrome их не поддерживает; управление тегами — отдельный контур
+(`/api/tags`, `/api/vault/{id}/tags`, см. ниже).
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/vault/export?bom=true\|false` | Свои записи в CSV; `text/csv; charset=utf-8`; ответ содержит заголовок `X-Vault-Export-Warning: csv-contains-plaintext-passwords` |
+| `POST` | `/api/vault/import` | multipart `file` + поле `conflictStrategy` (`skip` \| `upsert`); query-параметры `dryRun=true\|false`, `failFast=true\|false` |
+| `GET` | `/api/admin/users/{id}/vault/export` | ADMIN: CSV-экспорт записей произвольного пользователя |
+| `POST` | `/api/admin/users/{id}/vault/import` | ADMIN: импорт CSV в чужой аккаунт (параметры — как у `/api/vault/import`) |
+
+> ⚠️ **CSV содержит пароли в открытом виде.** Относитесь к экспортированному
+> файлу как к **резервной копии сейфа**: не передавайте по незащищённым
+> каналам, не храните в открытом виде, удаляйте сразу после миграции в
+> целевую систему. Заголовок `X-Vault-Export-Warning: csv-contains-plaintext-passwords`
+> ставится на каждый export-ответ — интеграторы и мониторинг могут ловить
+> его и алертить.
+
+Лимиты и поведение:
+
+- Записей в экспорте — не более `MAX_EXPORT_ROWS` (по умолчанию 10 000);
+  размер CSV — не более `MAX_CSV_BYTES` (по умолчанию 10 МиБ); превышение —
+  `413`/`422` ProblemDetail.
+- Импорт имеет **rate-limit** на IP: 3 запроса в минуту (60 с)
+  (`app.vault.import.rate-limit.{window-seconds:60, max-requests:3}`);
+  превышение — `429` ProblemDetail с заголовком `Retry-After`.
+- Конфликт по `name+url` (нормализация Chrome): `skip` (по умолчанию) —
+  существующая запись остаётся, импортируемая пропускается;
+  `upsert` — существующая запись перезаписывается (поля `password` и `note`
+  перешифровываются).
+- `dryRun=true` — отчёт о том, что произойдёт, без реальных изменений
+  (поля `wouldCreate`, `wouldUpdate`, `skipped`, `failed`, `errors[]`).
+- `failFast=false` (по умолчанию) — ошибки валидации отдельных строк
+  собираются в `errors[]`, импорт не прерывается на первой ошибке;
+  `failFast=true` — остановка на первой ошибке строки.
+- Аудит: `VAULT_EXPORTED` и `VAULT_IMPORTED` (actor, target, стратегия,
+  счётчики, `csvSha256`; **без секретов** в details) — для расследования
+  инцидентов.
+- BOM: `?bom=true` дописывает UTF-8 BOM (`0xEF 0xBB 0xBF`) — нужно для
+  корректного открытия в Excel на Windows; по умолчанию BOM отсутствует.
+
+Примеры curl (плейсхолдеры `<token>`, `<adminToken>`, `<userId>`):
+
+```bash
+# Экспорт своих записей (файл vault.csv, без BOM)
+curl -OJ -H "Authorization: Bearer <token>" \
+  "http://localhost:8080/api/vault/export?bom=false"
+
+# Импорт (по умолчанию conflictStrategy=skip, failFast=false)
+curl -X POST -H "Authorization: Bearer <token>" \
+  -F file=@vault.csv -F conflictStrategy=skip \
+  "http://localhost:8080/api/vault/import"
+
+# Импорт с dryRun: покажет, что произойдёт, без реальных изменений
+curl -X POST -H "Authorization: Bearer <token>" \
+  -F file=@vault.csv -F conflictStrategy=upsert \
+  "http://localhost:8080/api/vault/import?dryRun=true"
+
+# ADMIN: экспорт записей произвольного пользователя
+curl -OJ -H "Authorization: Bearer <adminToken>" \
+  "http://localhost:8080/api/admin/users/<userId>/vault/export"
+```
+
+Теги: импорт/экспорт CSV теги **не затрагивает** — формат Chrome их не
+поддерживает. Управление тегами — через `/api/tags` (CRUD над словарём
+тегов) и `/api/vault/{id}/tags` (привязка/отвязка тегов к записи). Полное
+дерево записей с тегами для миграции между экземплярами `safe-accounts`
+планируется как JSON-экспорт (`vault-export.json`) — отдельная фича
+в будущем (TODO).
 
 ### Администрирование
 

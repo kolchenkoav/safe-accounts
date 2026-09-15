@@ -71,6 +71,10 @@
       `SECRET_*`, `KEY_ROTATION_*`).
 - [x] В аудит не пишутся расшифрованные секреты.
 - [x] Аудит доступен для анализа через админ-API с фильтрами (`/api/admin/audit`).
+- [x] Экспорт/импорт CSV пишутся как `VAULT_EXPORTED` / `VAULT_IMPORTED`
+      (actor, target, стратегия, счётчики, `csvSha256`; без секретов в details).
+      Тесты: `VaultExportImportIT.auditRecordsExportWithoutSecrets`,
+      `VaultExportImportIT.auditRecordsImportWithoutSecrets`.
 
 ## 7. Резервные копии
 
@@ -100,7 +104,39 @@
 - [x] Валидация входящих данных через `jakarta.validation`.
 - [x] Контейнер работает от непривилегированного пользователя; образ многоэтапный.
 
-## 10. Веб-интерфейс (Task-11)
+## 10. CSV Export/Import
+
+- [x] Формат CSV — Chrome Password Manager (`name,url,username,password,note`),
+      RFC 4180; теги в CSV не входят.
+- [x] Лимиты: `MAX_EXPORT_ROWS` (по умолчанию 10 000), `MAX_CSV_BYTES`
+      (по умолчанию 10 МиБ); превышение — `413`/`422` ProblemDetail.
+      Тесты: `VaultExportImportIT.exportLimitsRowCount` и др.
+- [x] Rate-limit на импорт: 3 запроса в минуту с одного IP
+      (`app.vault.import.rate-limit.{window-seconds:60, max-requests:3}`);
+      превышение — `429` + `Retry-After`.
+      Тест: `VaultExportImportIT.importIsRateLimitedPerIp`.
+- [x] Дефолт `conflictStrategy=skip` (повторный импорт не перезаписывает);
+      `dryRun=true` доступен для отчёта без изменений;
+      `failFast=false` по умолчанию собирает ошибки в `errors[]`.
+      Тесты: `VaultExportImportIT.skipIsDefaultAndDoesNotOverwrite`,
+      `VaultExportImportIT.upsertOverwritesExisting`,
+      `VaultExportImportIT.dryRunReportsWithoutMutating`.
+- [x] Admin-эндпоинты требуют `ROLE_ADMIN` + проверка существования
+      пользователя; чужая запись неотличима от несуществующей
+      (единый 404). Тест: `VaultExportImportIT.adminCanExportAnotherUser`,
+      `VaultExportImportIT.adminImportRequiresAdminRole`.
+- [x] На каждом export-ответе выставляется заголовок
+      `X-Vault-Export-Warning: csv-contains-plaintext-passwords`
+      (интеграторы/мониторинг могут ловить и алертить).
+      Тест: `VaultExportImportIT.exportResponseCarriesWarningHeader`.
+- [x] Предупреждение о plaintext-паролях в CSV зафиксировано в README и
+      `docs/security.md` (раздел «CSV export/import: риски и mitigations»).
+- [x] Действия при инциденте (случайный импорт, утечка CSV) описаны в
+      `docs/runbook.md` §8 («Восстановление после случайного импорта»).
+- [x] Расширенные правила и полный список угроз — `docs/security.md` и
+      `docs/threat-model.md`.
+
+## 11. Веб-интерфейс (Task-11)
 
 - [x] Веб-часть отделена от API: отдельные filter chain в `SecurityConfig`
       (API — stateless Bearer, веб — серверная сессия).
