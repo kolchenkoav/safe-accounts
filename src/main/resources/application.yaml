@@ -93,11 +93,20 @@ app:
     # Strict-Transport-Security (Task-09): включать, когда приложение работает
     # за TLS-терминацией.
     hsts-enabled: ${APP_HSTS_ENABLED:false}
-  # Task-09: базовый in-memory rate limiting по IP для login/register.
+# Task-09: базовый in-memory rate limiting по IP для login/register.
   # При горизонтальном масштабировании требуется распределенный лимитер (Redis).
   rate-limit:
     window-seconds: ${APP_RATE_LIMIT_WINDOW_SECONDS:60}
     max-requests: ${APP_RATE_LIMIT_MAX_REQUESTS:10}
+  # Фаза 6: rate-limit на импорт (POST /api/vault/import и
+  # POST /api/admin/users/{id}/vault/import). Отдельный bucket: тот же IP
+  # может спокойно логиниться, но не выгружать в сейф по 60 CSV в минуту.
+  # При горизонтальном масштабировании — тоже Redis.
+  vault:
+    import:
+      rate-limit:
+        window-seconds: ${APP_VAULT_IMPORT_RATE_LIMIT_WINDOW_SECONDS:60}
+        max-requests: ${APP_VAULT_IMPORT_RATE_LIMIT_MAX_REQUESTS:3}
 
 springdoc:
   api-docs:

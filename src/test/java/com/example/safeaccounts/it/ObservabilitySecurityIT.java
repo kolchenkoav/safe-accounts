@@ -78,7 +78,7 @@ class ObservabilitySecurityIT {
     @Test
     void loginReturns429WithProblemDetailWhenLimitExceeded() throws Exception {
         // Лимит по умолчанию 10 запросов/мин на IP (application.yaml);
-        // MockMvc использует remoteAddr 127.0.0.1.
+// MockMvc использует remoteAddr 127.0.0.1.
         for (int i = 0; i < 10; i++) {
             mockMvc.perform(post("/api/auth/login")
                             .contentType(MediaType.APPLICATION_JSON)
@@ -86,7 +86,10 @@ class ObservabilitySecurityIT {
                                     new LoginRequest("rl-user-" + i, PASSWORD))))
                     .andExpect(status().isUnauthorized()); // пользователь не существует
         }
-        // 11-й запрос — 429 Too Many Requests в формате RFC 7807
+        // 11-й запрос — 429 Too Many Requests в формате RFC 7807.
+        // Фаза 6: Retry-After теперь рассчитывается точно по оставшемуся окну
+        // (а не фиксировано 60), потому что RateLimiter хранит момент старта
+        // окна; после 11 быстрых запросов в MockMvc остаётся чуть меньше 60с.
         String body = mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
@@ -95,7 +98,18 @@ class ObservabilitySecurityIT {
                 .andExpect(jsonPath("$.status").value(429))
                 .andExpect(jsonPath("$.detail").isNotEmpty())
                 .andExpect(jsonPath("$.title").value("Too Many Requests"))
-                .andExpect(header().string("Retry-After", "60"))
+                // Значение Retry-After должно быть целым от 1 до 60
+                // (не больше исходного окна 60с).
+                .andExpect(result -> {
+                    String header = result.getResponse().getHeader("Retry-After");
+                    org.assertj.core.api.Assertions.assertThat(header)
+                            .as("Retry-After header")
+                            .isNotNull()
+                            .matches("\\d+");
+                    int seconds = Integer.parseInt(header);
+                    org.assertj.core.api.Assertions.assertThat(seconds)
+                            .isBetween(1, 60);
+                })
                 .andReturn().getResponse().getContentAsString();
         // 429 не содержит деталей о запросе (пароля и т.п.)
         assertThat(body).doesNotContain(PASSWORD);
