@@ -86,6 +86,7 @@ class VaultServiceTest {
                 owner, "https://example.com", "alice", "S3cret-Pass!", "my note");
 
         VaultEntry saved = created.entry();
+        assertThat(saved.getNameEnc()).isNotEqualTo("https://example.com");
         assertThat(saved.getSiteEnc()).isNotEqualTo("https://example.com");
         assertThat(saved.getLoginEnc()).isNotEqualTo("alice");
         assertThat(saved.getPasswordEnc()).isNotEqualTo("S3cret-Pass!");
@@ -93,6 +94,7 @@ class VaultServiceTest {
         // Все поля реально расшифровываются DEK владельца
         SecretKey dek = cryptoService.unwrapDek(new com.example.safeaccounts.crypto.WrappedDek(
                 owner.getDekWrapped(), owner.getDekIv(), owner.getDekKekId()));
+        assertThat(cryptoService.decrypt(saved.getNameEnc(), dek)).isEqualTo("https://example.com");
         assertThat(cryptoService.decrypt(saved.getSiteEnc(), dek)).isEqualTo("https://example.com");
         assertThat(cryptoService.decrypt(saved.getLoginEnc(), dek)).isEqualTo("alice");
         assertThat(cryptoService.decrypt(saved.getPasswordEnc(), dek)).isEqualTo("S3cret-Pass!");
@@ -124,7 +126,9 @@ class VaultServiceTest {
         // Пароль зашифрован посторонним ключом: при reveal это упало бы,
         // но без reveal пароль вообще не расшифровывается.
         SecretKey foreignDek = cryptoService.generateDek();
+        String nameEnc = cryptoService.encrypt("site", dek);
         VaultEntry entry = new VaultEntry(UUID.randomUUID(), owner,
+                nameEnc,
                 cryptoService.encrypt("site", dek),
                 cryptoService.encrypt("login", dek),
                 cryptoService.encrypt("pass", foreignDek),
@@ -141,7 +145,9 @@ class VaultServiceTest {
 
     @Test
     void getWithRevealOfCorruptPasswordFailsNeutral() {
+        String enc = cryptoService.encrypt("site", unwrap(owner));
         VaultEntry entry = new VaultEntry(UUID.randomUUID(), owner,
+                enc,
                 cryptoService.encrypt("site", unwrap(owner)),
                 cryptoService.encrypt("login", unwrap(owner)),
                 "not-a-valid-gcm-container",
@@ -159,7 +165,9 @@ class VaultServiceTest {
     @Test
     void updateReencryptsWithNewIvAndAudits() {
         SecretKey dek = unwrap(owner);
+        String oldSiteEnc = cryptoService.encrypt("old-site", dek);
         VaultEntry entry = new VaultEntry(UUID.randomUUID(), owner,
+                oldSiteEnc,
                 cryptoService.encrypt("old-site", dek),
                 cryptoService.encrypt("old-login", dek),
                 cryptoService.encrypt("old-pass", dek),
@@ -193,7 +201,9 @@ class VaultServiceTest {
     @Test
     void listDecryptsOnlySiteAndLoginSortedByCreatedAt() {
         SecretKey dek = unwrap(owner);
+        String siteEnc = cryptoService.encrypt("site", dek);
         VaultEntry entry = new VaultEntry(UUID.randomUUID(), owner,
+                siteEnc,
                 cryptoService.encrypt("site", dek),
                 cryptoService.encrypt("login", dek),
                 cryptoService.encrypt("secret-pass", dek),

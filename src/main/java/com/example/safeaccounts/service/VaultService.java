@@ -76,20 +76,26 @@ public class VaultService {
     /**
      * Создает запись: шифрует все поля DEK владельца и сохраняет.
      *
-     * @throws IllegalArgumentException если поля не проходят сервисную валидацию
+* @throws IllegalArgumentException если поля не проходят сервисную валидацию
      */
     @Transactional
     public CreatedEntry create(User owner, String site, String login, String password, String notes) {
         SecretKey dek = unwrapDek(owner);
         Instant now = clock.instant();
 
+String siteEnc = cryptoService.encrypt(site, dek);
         // notes==null значит «примечания нет»: в БД NULL, а не шифротекст пустой строки.
         String notesEnc = notes == null ? null : cryptoService.encrypt(notes, dek);
+        // До Phase 04 в сервисе нет явного параметра name — как placeholder
+        // используется зашифрованный site (согласуется с V2 бэкфиллом).
+        // В Phase 04 будет явный параметр name и отдельные IV.
+        String nameEnc = siteEnc;
 
         VaultEntry entry = new VaultEntry(
                 UUID.randomUUID(),
                 owner,
-                cryptoService.encrypt(site, dek),
+                nameEnc,
+                siteEnc,
                 cryptoService.encrypt(login, dek),
                 cryptoService.encrypt(password, dek),
                 notesEnc,
@@ -151,7 +157,8 @@ public class VaultService {
         Instant now = clock.instant();
 
         String notesEnc = notes == null ? null : cryptoService.encrypt(notes, dek);
-        entry.updateEncrypted(
+entry.updateEncrypted(
+                cryptoService.encrypt(site, dek),  // nameEnc placeholder
                 cryptoService.encrypt(site, dek),
                 cryptoService.encrypt(login, dek),
                 cryptoService.encrypt(password, dek),

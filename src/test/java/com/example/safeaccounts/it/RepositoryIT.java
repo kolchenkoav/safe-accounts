@@ -132,8 +132,9 @@ class RepositoryIT {
         User owner = persistUser("vault-owner");
         User other = persistUser("vault-other");
 
-        VaultEntry entry = new VaultEntry(
+VaultEntry entry = new VaultEntry(
                 UUID.randomUUID(), owner,
+                "name-enc",
                 "site-enc", "login-enc", "password-enc", "notes-enc",
                 Instant.now(), null, null);
         entry = vaultEntryRepository.saveAndFlush(entry);
@@ -182,11 +183,12 @@ class RepositoryIT {
         User user = transactionTemplate.execute(status -> {
             User u = userRepository.saveAndFlush(newUser("cascade-user"));
 
-            authTokenRepository.saveAndFlush(new AuthToken(
+authTokenRepository.saveAndFlush(new AuthToken(
                     UUID.randomUUID(), u, "cascade-token-hash", "…0000",
                     null, null, Instant.now(), null, null, null, null));
             vaultEntryRepository.saveAndFlush(new VaultEntry(
-                    UUID.randomUUID(), u, "site-enc", "login-enc", "password-enc",
+UUID.randomUUID(), u, "name-enc",
+                    "site-enc", "login-enc", "password-enc",
                     null, Instant.now(), null, null));
             auditEventRepository.saveAndFlush(new AuditEvent(
                     UUID.randomUUID(), u, UUID.randomUUID(), "LOGIN_SUCCESS",

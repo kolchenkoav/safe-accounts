@@ -3,12 +3,17 @@ package com.example.safeaccounts.domain;
 import jakarta.persistence.*;
 
 import java.time.Instant;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.UUID;
 
 /**
- * Запись сейфа (сайт, логин, пароль, примечание).
+ * Запись сейфа (имя, сайт, логин, пароль, примечание).
  * Все чувствительные поля хранятся только в зашифрованном виде
- * (AES-256-GCM, base64); в списковых запросах пароль не возвращается.
+ * (AES-256-GCM, base64(iv || ciphertext || tag)); в списковых запросах
+ * пароль не возвращается.
+ * Связь с тегами — many-to-many через {@code vault_entry_tags};
+ * каскадов и orphan-removal нет (теги живут независимо).
  */
 @Entity
 @Table(name = "vault_entries")
@@ -22,6 +27,13 @@ public class VaultEntry {
     @JoinColumn(name = "user_id", nullable = false,
             foreignKey = @ForeignKey(name = "fk_vault_entries_user"))
     private User user;
+
+    /**
+     * Шифротекст имени (base64(iv || ciphertext || tag));
+     * открытое значение в БД отсутствует.
+     */
+    @Column(name = "name_enc", nullable = false)
+    private String nameEnc;
 
     /** Шифротекст сайта (base64), открытое значение в БД отсутствует. */
     @Column(name = "site_enc", nullable = false)
@@ -48,12 +60,26 @@ public class VaultEntry {
     @Version
     private Long version;
 
+    /**
+     * Теги записи (plaintext). Загружаются лениво; каскадного удаления тегов
+     * нет — удаление записи чистит только связи (ON DELETE CASCADE в БД).
+     */
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+            name = "vault_entry_tags",
+            joinColumns = @JoinColumn(name = "vault_entry_id",
+                    foreignKey = @ForeignKey(name = "fk_vet_entry")),
+            inverseJoinColumns = @JoinColumn(name = "tag_id",
+                    foreignKey = @ForeignKey(name = "fk_vet_tag")))
+    private Set<Tag> tags = new LinkedHashSet<>();
+
     protected VaultEntry() {
         // для JPA
     }
 
     public VaultEntry(UUID id,
                       User user,
+                      String nameEnc,
                       String siteEnc,
                       String loginEnc,
                       String passwordEnc,
@@ -63,6 +89,7 @@ public class VaultEntry {
                       Long version) {
         this.id = id;
         this.user = user;
+        this.nameEnc = nameEnc;
         this.siteEnc = siteEnc;
         this.loginEnc = loginEnc;
         this.passwordEnc = passwordEnc;
@@ -78,6 +105,10 @@ public class VaultEntry {
 
     public User getUser() {
         return user;
+    }
+
+    public String getNameEnc() {
+        return nameEnc;
     }
 
     public String getSiteEnc() {
@@ -108,6 +139,11 @@ public class VaultEntry {
         return version;
     }
 
+    /** Теги записи; коллекция модифицируется через сервисный слой. */
+    public Set<Tag> getTags() {
+        return tags;
+    }
+
     // -- доменные операции (вызываются только сервисным слоем, Task-05) ------
 
     /**
@@ -115,11 +151,13 @@ public class VaultEntry {
      * Аргументы — готовые шифротексты; открытые значения сюда не передаются.
      * Оптимистичная блокировка обеспечивается {@code @Version}.
      */
-    public void updateEncrypted(String newSiteEnc,
+    public void updateEncrypted(String newNameEnc,
+                                String newSiteEnc,
                                 String newLoginEnc,
                                 String newPasswordEnc,
                                 String newNotesEnc,
                                 Instant at) {
+        this.nameEnc = newNameEnc;
         this.siteEnc = newSiteEnc;
         this.loginEnc = newLoginEnc;
         this.passwordEnc = newPasswordEnc;
