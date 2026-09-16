@@ -1,4 +1,4 @@
-package com.example.safeaccounts.config;
+package com.example.safeaccounts.web;
 
 import org.springframework.boot.web.server.ErrorPage;
 import org.springframework.boot.web.server.ErrorPageRegistrar;
@@ -8,6 +8,10 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 /**
  * Регистрация Tomcat error-page для oversized multipart (Фаза 4, TP B).
+ * <p>
+ * Класс в пакете {@code web} (P3 рефакторинга пакетов): он знает URL
+ * web-слоя ({@code /web/error/file-too-large}, WebErrorController) —
+ * это web-инфраструктура, а не общая конфигурация.
  * <p>
  * Страховка для случая, когда Spring-тип MaxUploadSizeExceededException
  * НЕ перехвачен advice ({@code @ControllerAdvice} живёт только внутри

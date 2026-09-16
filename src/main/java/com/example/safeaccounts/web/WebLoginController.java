@@ -2,6 +2,7 @@ package com.example.safeaccounts.web;
 
 import com.example.safeaccounts.domain.User;
 import com.example.safeaccounts.service.AuthService;
+import com.example.safeaccounts.security.AuthUser;
 import com.example.safeaccounts.service.AuthServiceException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -77,9 +78,9 @@ public class WebLoginController {
 
             UsernamePasswordAuthenticationToken authentication =
                     new UsernamePasswordAuthenticationToken(
-                            new com.example.safeaccounts.security.AuthUser(user, null),
+                            new AuthUser(user, null),
                             null,
-                            new com.example.safeaccounts.security.AuthUser(user, null).authorities());
+                            new AuthUser(user, null).authorities());
             authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
             SecurityContextHolder.getContext().setAuthentication(authentication);
             securityContextRepository.saveContext(

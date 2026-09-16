@@ -2,6 +2,7 @@ package com.example.safeaccounts.service;
 
 import com.example.safeaccounts.audit.AuditService;
 import com.example.safeaccounts.crypto.AesGcmCryptoService;
+import com.example.safeaccounts.crypto.WrappedDek;
 import com.example.safeaccounts.domain.User;
 import com.example.safeaccounts.domain.VaultEntry;
 import com.example.safeaccounts.repository.TagRepository;
@@ -478,7 +479,7 @@ public class VaultExportImportService {
     }
 
     private SecretKey unwrapDek(User owner) {
-        return cryptoService.unwrapDek(new com.example.safeaccounts.crypto.WrappedDek(
+        return cryptoService.unwrapDek(new WrappedDek(
                 owner.getDekWrapped(), owner.getDekIv(), owner.getDekKekId()));
     }
 

@@ -3,6 +3,7 @@ package com.example.safeaccounts.service;
 import com.example.safeaccounts.audit.AuditService;
 import com.example.safeaccounts.crypto.AesGcmCryptoService;
 import com.example.safeaccounts.crypto.AesGcmCryptoService.CryptoException;
+import com.example.safeaccounts.crypto.WrappedDek;
 import com.example.safeaccounts.domain.Tag;
 import com.example.safeaccounts.domain.User;
 import com.example.safeaccounts.domain.VaultEntry;
@@ -243,7 +244,7 @@ public class VaultService {
 
     /** Разворачивает DEK владельца; ошибки не раскрывают деталей. */
     private SecretKey unwrapDek(User owner) {
-        return cryptoService.unwrapDek(new com.example.safeaccounts.crypto.WrappedDek(
+        return cryptoService.unwrapDek(new WrappedDek(
                 owner.getDekWrapped(), owner.getDekIv(), owner.getDekKekId()));
     }
 

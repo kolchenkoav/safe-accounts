@@ -4,6 +4,7 @@ import com.example.safeaccounts.audit.AuditService;
 import com.example.safeaccounts.domain.AuthToken;
 import com.example.safeaccounts.domain.User;
 import com.example.safeaccounts.repository.AuthTokenRepository;
+import com.example.safeaccounts.security.AuthTokenResolver;
 import com.example.safeaccounts.security.AuthUser;
 import com.example.safeaccounts.security.PasswordHasher;
 import com.example.safeaccounts.security.TokenGenerator;
@@ -27,7 +28,7 @@ import java.util.UUID;
  * </ul>
  */
 @Service
-public class TokenService implements UserService.PasswordRotationCallback {
+public class TokenService implements UserService.PasswordRotationCallback, AuthTokenResolver {
 
     /** Срок жизни токена по умолчанию (Task-04: поддержка срока действия). */
     static final Duration TOKEN_TTL = Duration.ofHours(24);
@@ -84,6 +85,7 @@ public class TokenService implements UserService.PasswordRotationCallback {
      * @return AuthUser или {@code null}, если токен недействителен/пользователь отключен
      */
     @Transactional(readOnly = true)
+    @Override
     public AuthUser resolveAuthUser(String rawToken) {
         AuthToken token = findValidByRawTokenInternal(rawToken);
         if (token == null || !token.getUser().isEnabled()) {

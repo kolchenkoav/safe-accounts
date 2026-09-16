@@ -105,6 +105,19 @@ public class AdminService {
 
     // -- пользователи ---------------------------------------------------------
 
+    /**
+     * Возвращает пользователя по id или бросает
+     * {@link AuthServiceException}(USER_NOT_FOUND) — нейтральное исключение
+     * для 404-обработчиков контроллеров (REST: 404 ProblemDetail; web:
+     * flash + redirect). Заменяет прямой доступ контроллеров к
+     * UserRepository (P2 рефакторинга пакетов: api/web не зависят от
+     * repository).
+     */
+    @Transactional(readOnly = true)
+    public User requireUserById(UUID id) {
+        return requireUser(id);
+    }
+
     @Transactional(readOnly = true)
     public Page<User> listUsers(int page, int size) {
         int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);

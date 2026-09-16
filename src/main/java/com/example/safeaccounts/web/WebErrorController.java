@@ -8,7 +8,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 /**
  * Страница ошибки «файл слишком большой» (Фаза 4, TP B).
  * <p>
- * Регистрируется через {@code ErrorPageRegistrar} (см. config/ErrorPageConfig):
+ * Регистрируется через {@code ErrorPageRegistrar} (см. web/ErrorPageConfig):
  * Tomcat error-dispatch ловит исключения, брошенные ДО DispatcherServlet —
  * в том числе MaxUploadSizeExceededException из CsrfFilter web-цепочки
  * (Tomcat парсит multipart при {@code getParameter("_csrf")}). Раньше это

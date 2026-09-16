@@ -1,6 +1,5 @@
 package com.example.safeaccounts.security;
 
-import com.example.safeaccounts.service.TokenService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -33,10 +32,10 @@ public class BearerTokenAuthenticationFilter extends OncePerRequestFilter {
 
     private static final String BEARER_PREFIX = "Bearer ";
 
-    private final TokenService tokenService;
+    private final AuthTokenResolver tokenResolver;
 
-    public BearerTokenAuthenticationFilter(TokenService tokenService) {
-        this.tokenService = tokenService;
+    public BearerTokenAuthenticationFilter(AuthTokenResolver tokenResolver) {
+        this.tokenResolver = tokenResolver;
     }
 
     @Override
@@ -47,7 +46,7 @@ public class BearerTokenAuthenticationFilter extends OncePerRequestFilter {
         if (header != null && header.startsWith(BEARER_PREFIX)
                 && SecurityContextHolder.getContext().getAuthentication() == null) {
             String rawToken = header.substring(BEARER_PREFIX.length()).trim();
-            AuthUser principal = tokenService.resolveAuthUser(rawToken);
+            AuthUser principal = tokenResolver.resolveAuthUser(rawToken);
             if (principal != null) {
                 UsernamePasswordAuthenticationToken authentication =
                         new UsernamePasswordAuthenticationToken(principal, null, principal.authorities());

@@ -4,10 +4,11 @@ import com.example.safeaccounts.domain.User;
 import com.example.safeaccounts.security.AuthUser;
 import com.example.safeaccounts.service.VaultExportImportService;
 import com.example.safeaccounts.service.VaultService;
-import com.example.safeaccounts.service.csv.ExportPayload;
-import com.example.safeaccounts.service.csv.CsvFilenames;
-import com.example.safeaccounts.service.csv.ImportReport;
 import com.example.safeaccounts.service.csv.ConflictStrategy;
+import com.example.safeaccounts.service.csv.CsvFilenames;
+import com.example.safeaccounts.service.csv.ExportPayload;
+import com.example.safeaccounts.service.csv.ImportReport;
+import com.example.safeaccounts.service.csv.InvalidCsvException;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpHeaders;
@@ -27,6 +28,7 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
@@ -201,11 +203,11 @@ public class VaultController {
             @RequestPart(IMPORT_FILE_PART) MultipartFile file,
             @RequestParam(defaultValue = "skip") String conflictStrategy,
             @RequestParam(defaultValue = "false") boolean dryRun,
-            @RequestParam(defaultValue = "false") boolean failFast) throws java.io.IOException {
+            @RequestParam(defaultValue = "false") boolean failFast) throws IOException {
         User actor = currentUser(principal);
         ConflictStrategy strategy = parseConflictStrategy(conflictStrategy);
         if (file == null || file.isEmpty()) {
-            throw new com.example.safeaccounts.service.csv.InvalidCsvException("CSV file is empty");
+            throw new InvalidCsvException("CSV file is empty");
         }
         byte[] csvBytes = file.getBytes();
         ImportReport report = exportImportService.importFromCsv(
@@ -218,7 +220,12 @@ public class VaultController {
         return principal.user();
     }
 
-    /** Простой пагинированный ответ без зависимости от Spring Data в контракте API. */
+    /**
+     * Простой пагинированный ответ без зависимости от Spring Data в контракте API.
+     * P5/A2: обе формы (здесь и в api.PageResponse) 5-полевые и идентичные;
+     * nested оставлен для минимизации churn — унификация использования
+     * (один record на оба контроллера) — отдельная задача, сейчас не делалась.
+     */
     public record PageResponse<T>(
             int page,
             int size,

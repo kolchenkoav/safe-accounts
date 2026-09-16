@@ -1,7 +1,6 @@
 package com.example.safeaccounts.api;
 
 import com.example.safeaccounts.domain.User;
-import com.example.safeaccounts.repository.UserRepository;
 import com.example.safeaccounts.security.AuthUser;
 import com.example.safeaccounts.service.AdminService;
 import com.example.safeaccounts.service.AuthServiceException;
@@ -11,6 +10,7 @@ import com.example.safeaccounts.service.csv.ConflictStrategy;
 import com.example.safeaccounts.service.csv.CsvFilenames;
 import com.example.safeaccounts.service.csv.ExportPayload;
 import com.example.safeaccounts.service.csv.ImportReport;
+import com.example.safeaccounts.service.csv.InvalidCsvException;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpHeaders;
@@ -52,14 +52,11 @@ public class AdminController {
 
     private final AdminService adminService;
     private final VaultExportImportService exportImportService;
-    private final UserRepository userRepository;
 
     public AdminController(AdminService adminService,
-                           VaultExportImportService exportImportService,
-                           UserRepository userRepository) {
+                           VaultExportImportService exportImportService) {
         this.adminService = adminService;
         this.exportImportService = exportImportService;
-        this.userRepository = userRepository;
     }
 
     // -- пользователи ---------------------------------------------------------
@@ -211,7 +208,7 @@ public class AdminController {
         User target = requireUserOrNotFound(id);
         ConflictStrategy strategy = VaultController.parseConflictStrategy(conflictStrategy);
         if (file == null || file.isEmpty()) {
-            throw new com.example.safeaccounts.service.csv.InvalidCsvException("CSV file is empty");
+            throw new InvalidCsvException("CSV file is empty");
         }
         byte[] csvBytes = file.getBytes();
         ImportReport report = exportImportService.importFromCsv(
@@ -229,11 +226,11 @@ public class AdminController {
     /**
      * Возвращает пользователя по id; если не найден — бросает
      * {@link AuthServiceException}(USER_NOT_FOUND), что маппится в 404.
+     * Делегирует в {@link AdminService#requireUserById} (P2: контроллеры
+     * не зависят от repository).
      */
     private User requireUserOrNotFound(UUID id) {
-        return userRepository.findById(id)
-                .orElseThrow(() -> new AuthServiceException(
-                        AuthServiceException.Reason.USER_NOT_FOUND));
+        return adminService.requireUserById(id);
     }
 
     /** Ошибка ротации: понятный RFC 7807 ответ без деталей материала ключей. */
@@ -255,15 +252,6 @@ public class AdminController {
                 user.isEnabled(),
                 user.getCreatedAt(),
                 user.getUpdatedAt());
-    }
-
-    /** Простой пагинированный ответ (как в VaultController). */
-    public record PageResponse<T>(
-            int page,
-            int size,
-            long totalElements,
-            int totalPages,
-            List<T> content) {
     }
 
     /** Результат сброса пароля: только количество отозванных токенов. */

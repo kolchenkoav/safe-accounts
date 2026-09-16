@@ -1,98 +1,145 @@
-<!DOCTYPE html>
+<!doctype html>
 <html xmlns:th="http://www.thymeleaf.org" lang="ru" data-theme="dark">
-<!-- Каркас <head> (включая theme.js без defer, анти-FOUC) — общий фрагмент -->
-<head th:replace="~{fragments :: pageHead('Запись — safe-accounts')}"></head>
-<body>
-<nav>
-    <a th:href="@{/web/entries}">&larr; К списку</a>
-    <!-- Тема: тёмная/светлая, выбор в localStorage (тёмная по умолчанию) -->
-    <button type="button" th:replace="~{fragments :: themeToggle}"></button>
-</nav>
+    <!-- Каркас <head> (включая theme.js без defer, анти-FOUC) — общий фрагмент -->
+    <head
+        th:replace="~{fragments :: pageHead('Запись — safe-accounts')}"
+    ></head>
+    <body>
+        <nav>
+            <a th:href="@{/web/entries}">&larr; К списку</a>
+            <!-- Тема: тёмная/светлая, выбор в localStorage (тёмная по умолчанию) -->
+            <button
+                type="button"
+                th:replace="~{fragments :: themeToggle}"
+            ></button>
+        </nav>
 
-    <!-- page-entry-view: карточка — во всю ширину окна (fix-UI, как page-entries) -->
-    <main class="card page-entry-view">
-    <!-- Заголовок — name записи (fallback на site — на случай пустого name) -->
-    <h1 th:text="${entry.name != null && !entry.name.isBlank() ? entry.name : entry.site}">Название</h1>
-
-    <div class="alert alert-info" th:if="${flashMessage}" th:text="${flashMessage}"></div>
-    <div class="alert alert-error" th:if="${flashError}" th:text="${flashError}"></div>
-
-    <dl>
-        <dt>Сайт</dt>
-        <dd th:text="${entry.site}"></dd>
-
-        <dt>Логин</dt>
-        <dd th:text="${entry.login}"></dd>
-
-        <dt>Пароль</dt>
-        <dd>
-            <!-- Пароль отображается только после явного POST /reveal (аудит SECRET_REVEALED) -->
-            <span th:if="${revealed}" th:text="${entry.password}"></span>
-            <form th:if="${!revealed}" th:action="@{/web/entries/{id}/reveal(id=${entryId})}" method="post" class="inline">
-                <button type="submit" class="link">Показать пароль</button>
-            </form>
-        </dd>
-
-        <dt>Примечание</dt>
-        <dd th:text="${entry.notes != null ? entry.notes : '-'}"></dd>
-
-        <!-- Теги записи (Фаза 2): чипы с отвязкой + форма привязки (datalist) -->
-        <dt>Теги</dt>
-        <dd>
-            <span th:if="${entry.tags.isEmpty()}" class="muted">—</span>
-            <span class="tag-badge" th:each="tag : ${entry.tags}">
-                <a th:href="@{/web/entries(tag=${tag.id})}" th:text="${tag.name}">tag</a>
-                <!-- Отвязка тега: мини-POST-форма (CSRF через th:action) -->
-                <form
-                    th:action="@{/web/entries/{id}/tags/{tagId}/delete(id=${entryId}, tagId=${tag.id})}"
-                    method="post"
-                    class="inline tag-chip-remove"
-                    data-confirm="Снять тег с записи?"
-                >
-                    <button
-                        type="submit"
-                        class="link"
-                        aria-label="Снять тег"
-                        >×</button
-                    >
-                </form>
-            </span>
-            <!-- Привязка по имени: существующий тег или новый -->
-            <form
-                th:action="@{/web/entries/{id}/tags(id=${entryId})}"
-                method="post"
-                class="tag-attach-form"
+        <!-- page-entry-view: карточка — во всю ширину окна (fix-UI, как page-entries) -->
+        <main class="card page-entry-view">
+            <!-- Заголовок — name записи (fallback на site — на случай пустого name) -->
+            <h1
+                th:text="${entry.name != null && !entry.name.isBlank() ? entry.name : entry.site}"
             >
-                <input
-                    type="text"
-                    name="tagName"
-                    list="all-tags"
-                    maxlength="64"
-                    autocomplete="off"
-                    placeholder="Имя тега"
-                />
-                <datalist id="all-tags">
-                    <option th:each="t : ${allTags}" th:value="${t.name}"></option>
-                </datalist>
-                <button type="submit" class="small">Привязать</button>
-            </form>
-        </dd>
+                Название
+            </h1>
 
-        <dt>Создана</dt>
-        <dd th:text="${entry.createdAt != null ? #temporals.format(entry.createdAt, 'yyyy-MM-dd HH:mm') : '-'}"></dd>
+            <div
+                class="alert alert-info"
+                th:if="${flashMessage}"
+                th:text="${flashMessage}"
+            ></div>
+            <div
+                class="alert alert-error"
+                th:if="${flashError}"
+                th:text="${flashError}"
+            ></div>
 
-        <dt>Обновлена</dt>
-        <dd th:text="${entry.updatedAt != null ? #temporals.format(entry.updatedAt, 'yyyy-MM-dd HH:mm') : '-'}"></dd>
-    </dl>
+            <dl>
+                <dt>Сайт</dt>
+                <dd th:text="${entry.site}"></dd>
 
-    <div class="actions">
-        <a class="button" th:href="@{/web/entries/{id}/edit(id=${entryId})}">Изменить</a>
-        <!-- Подтверждение — через data-confirm + main.js (без inline-JS, Фаза 2/A4) -->
-        <form th:action="@{/web/entries/{id}/delete(id=${entryId})}" method="post" class="inline"
-              data-confirm="Удалить запись?">
-            <button type="submit" class="danger">Удалить</button>
-        </form>
-    </div>
-</main>
-</body>
+                <dt>Логин</dt>
+                <dd th:text="${entry.login}"></dd>
+
+                <dt>Пароль</dt>
+                <dd>
+                    <!-- Пароль отображается только после явного POST /reveal (аудит SECRET_REVEALED) -->
+                    <span
+                        th:if="${revealed}"
+                        th:text="${entry.password}"
+                    ></span>
+                    <form
+                        th:if="${!revealed}"
+                        th:action="@{/web/entries/{id}/reveal(id=${entryId})}"
+                        method="post"
+                        class="inline"
+                    >
+                        <button type="submit" class="link">
+                            Показать пароль
+                        </button>
+                    </form>
+                </dd>
+
+                <dt>Примечание</dt>
+                <dd th:text="${entry.notes != null ? entry.notes : '-'}"></dd>
+
+                <!-- Теги записи (Фаза 2): чипы с отвязкой + форма привязки (datalist) -->
+                <dt>Теги</dt>
+                <dd>
+                    <span th:if="${entry.tags.isEmpty()}" class="muted">—</span>
+                    <span class="tag-badge" th:each="tag : ${entry.tags}">
+                        <a
+                            th:href="@{/web/entries(tag=${tag.id})}"
+                            th:text="${tag.name}"
+                            >tag</a
+                        >
+                        <!-- Отвязка тега: мини-POST-форма (CSRF через th:action) -->
+                        <form
+                            th:action="@{/web/entries/{id}/tags/{tagId}/delete(id=${entryId}, tagId=${tag.id})}"
+                            method="post"
+                            class="inline tag-chip-remove"
+                            data-confirm="Снять тег с записи?"
+                        >
+                            <button
+                                type="submit"
+                                class="link"
+                                aria-label="Снять тег"
+                            >
+                                ×
+                            </button>
+                        </form>
+                    </span>
+                    <!-- Привязка по имени: существующий тег или новый -->
+                    <form
+                        th:action="@{/web/entries/{id}/tags(id=${entryId})}"
+                        method="post"
+                        class="tag-attach-form"
+                    >
+                        <input
+                            type="text"
+                            name="tagName"
+                            list="all-tags"
+                            maxlength="64"
+                            autocomplete="off"
+                            placeholder="Имя тега"
+                        />
+                        <datalist id="all-tags">
+                            <option
+                                th:each="t : ${allTags}"
+                                th:value="${t.name}"
+                            ></option>
+                        </datalist>
+                        <button type="submit" class="small">Привязать</button>
+                    </form>
+                </dd>
+
+                <dt>Создана</dt>
+                <dd
+                    th:text="${entry.createdAt != null ? #temporals.format(entry.createdAt, 'yyyy-MM-dd HH:mm') : '-'}"
+                ></dd>
+
+                <dt>Обновлена</dt>
+                <dd
+                    th:text="${entry.updatedAt != null ? #temporals.format(entry.updatedAt, 'yyyy-MM-dd HH:mm') : '-'}"
+                ></dd>
+            </dl>
+
+            <div class="actions">
+                <a
+                    class="button"
+                    th:href="@{/web/entries/{id}/edit(id=${entryId})}"
+                    >Изменить</a
+                >
+                <!-- Подтверждение — через data-confirm + main.js (без inline-JS, Фаза 2/A4) -->
+                <form
+                    th:action="@{/web/entries/{id}/delete(id=${entryId})}"
+                    method="post"
+                    class="inline"
+                    data-confirm="Удалить запись?"
+                >
+                    <button type="submit" class="danger">Удалить</button>
+                </form>
+            </div>
+        </main>
+    </body>
 </html>

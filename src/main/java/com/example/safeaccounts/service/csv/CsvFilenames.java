@@ -5,9 +5,11 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 
 /**
- * Имена CSV-файлов для скачивания и заголовки ответа экспорта.
- * Нейтральный слой (service/csv): единая копия для web- и api-контроллеров
- * (Фаза 5, дедуп api↔web).
+ * HTTP-хелпер выгрузки CSV: имена файлов (filename в Content-Disposition)
+ * и warning-заголовок ответа. Вызывают только контроллеры api и web; сам
+ * экспортный сервис ({@code VaultExportImportService}) его не использует.
+ * Размещён в {@code service.csv} как общая зона api и web (P5) — перенос
+ * в отдельный пакет сочтён избыточным (потребовал бы правки AGENTS.md).
  */
 public final class CsvFilenames {
 

@@ -1,7 +1,6 @@
 package com.example.safeaccounts.web;
 
 import com.example.safeaccounts.domain.User;
-import com.example.safeaccounts.repository.UserRepository;
 import com.example.safeaccounts.security.AuthUser;
 import com.example.safeaccounts.service.AdminService;
 import com.example.safeaccounts.service.AdminServiceException;
@@ -56,14 +55,11 @@ public class WebAdminController {
 
     private final AdminService adminService;
     private final VaultExportImportService exportImportService;
-    private final UserRepository userRepository;
 
     public WebAdminController(AdminService adminService,
-                              VaultExportImportService exportImportService,
-                              UserRepository userRepository) {
+                              VaultExportImportService exportImportService) {
         this.adminService = adminService;
         this.exportImportService = exportImportService;
-        this.userRepository = userRepository;
     }
 
     // -- пользователи ----------------------------------------------------------
@@ -196,8 +192,10 @@ public class WebAdminController {
                               @PathVariable UUID id,
                               @RequestParam(defaultValue = "false") boolean bom,
                               RedirectAttributes redirectAttributes) {
-        User target = userRepository.findById(id).orElse(null);
-        if (target == null) {
+        User target;
+        try {
+            target = adminService.requireUserById(id);
+        } catch (AuthServiceException e) {
             redirectAttributes.addFlashAttribute("flashError", "Пользователь не найден");
             return "redirect:/web/admin/users";
         }
@@ -231,8 +229,10 @@ public class WebAdminController {
     public String importPage(@PathVariable UUID id,
                              Model model,
                              RedirectAttributes redirectAttributes) {
-        User target = userRepository.findById(id).orElse(null);
-        if (target == null) {
+        User target;
+        try {
+            target = adminService.requireUserById(id);
+        } catch (AuthServiceException e) {
             redirectAttributes.addFlashAttribute("flashError", "Пользователь не найден");
             return "redirect:/web/admin/users";
         }
@@ -260,8 +260,10 @@ public class WebAdminController {
                             @RequestParam(defaultValue = "false") boolean dryRun,
                             @RequestParam(defaultValue = "false") boolean failFast,
                             RedirectAttributes redirectAttributes) throws java.io.IOException {
-        User target = userRepository.findById(id).orElse(null);
-        if (target == null) {
+        User target;
+        try {
+            target = adminService.requireUserById(id);
+        } catch (AuthServiceException e) {
             redirectAttributes.addFlashAttribute("flashError", "Пользователь не найден");
             return "redirect:/web/admin/users";
         }
