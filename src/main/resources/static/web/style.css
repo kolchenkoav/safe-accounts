@@ -317,6 +317,16 @@ main.page-entry-view {
     margin-right: 2rem;
 }
 
+/* Страницы «Пользователи» и «Журнал аудита» (fix-UI): та же схема полной
+   ширины, что для списка и карточки; вертикальные margin/padding — прежние
+   от .card; остальной админ-раздел не затронут. */
+main.page-admin-users,
+main.page-admin-audit {
+    max-width: none;
+    margin-left: 2rem;
+    margin-right: 2rem;
+}
+
 /* Панель Экспорт/Импорт (fix-UI): «Экспорт CSV» и «Импорт CSV» —
    одинаковые размеры (min-width/padding/line-height/шрифт); цвета —
    прежние переменные accent/accent-text, обе темы без изменений. */

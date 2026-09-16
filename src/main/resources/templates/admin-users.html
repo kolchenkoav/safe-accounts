@@ -6,7 +6,8 @@
         <!-- Общая навигация админки (включая переключатель темы) — фрагмент -->
         <nav th:replace="~{fragments :: adminNav(${username})}"></nav>
 
-        <main class="card wide">
+        <!-- page-admin-users: только эта страница — во всю ширину окна (fix-UI) -->
+        <main class="card wide page-admin-users">
             <h1>Пользователи</h1>
 
             <div
