@@ -163,7 +163,7 @@ class WebUiTagsExportImportIT {
 
     private long userTagCount(String username) {
         return transactionTemplate.execute(tx ->
-                tagRepository.findAllByUser_Id(userIdOf(username)).size());
+                tagRepository.findAllByUser_IdOrderByNameLowerAsc(userIdOf(username)).size());
     }
 
     private Set<UUID> entryTagIds(UUID entryId) {
@@ -1162,5 +1162,144 @@ class WebUiTagsExportImportIT {
                 .andExpect(status().isOk())
                 .andExpect(content().string(
                         org.hamcrest.Matchers.containsString(marker)));
+    }
+
+    // -- Фаза 6: явный select-фильтр по тегу ----------------------------------
+
+    /** (a) Select присутствует с опциями созданных тегов (label = name (N)). */
+    @Test
+    void selectFilterShowsUserTagsWithCounts() throws Exception {
+        registerUser("selfilter");
+        var session = login("selfilter");
+        String entryId = createEntry(session, "Фильтр-запись");
+        createTag(session, "work");
+        createTag(session, "home");
+        mockMvc.perform(post("/web/entries/" + entryId + "/tags")
+                        .session(session).with(csrf()).param("tagName", "work"))
+                .andExpect(status().is3xxRedirection());
+
+        MvcResult list = mockMvc.perform(get("/web/entries").session(session))
+                .andExpect(status().isOk())
+                .andReturn();
+        String html = html(list);
+        assertThat(html).contains("Все теги");
+        assertThat(html).contains("work (1)");
+        assertThat(html).contains("home (0)");
+        // (F5) Опции отсортированы по name_lower: home < work
+        assertThat(html.indexOf("home (0)")).isLessThan(html.indexOf("work (1)"));
+    }
+
+    /** (b)+(d) Выбор тега → отфильтрованный список; select отражает выбор. */
+    @Test
+    void selectFilterAppliesAndReflectsSelection() throws Exception {
+        registerUser("selfilter2");
+        var session = login("selfilter2");
+        String tagged = createEntry(session, "Помеченная-селект");
+        createEntry(session, "Непомеченная-селект");
+        createTag(session, "only");
+        mockMvc.perform(post("/web/entries/" + tagged + "/tags")
+                        .session(session).with(csrf()).param("tagName", "only"))
+                .andExpect(status().is3xxRedirection());
+
+        // Выбор тега (submit GET-формы = GET ?tag=<id>) → только помеченная
+        String tagId = firstTagId(session);
+        MvcResult filtered = mockMvc.perform(get("/web/entries")
+                        .session(session).param("tag", tagId))
+                .andExpect(status().isOk())
+                .andReturn();
+        String html = html(filtered);
+        assertThat(html).contains("Помеченная-селект");
+        assertThat(html).doesNotContain("Непомеченная-селект");
+        // (d/A3) th:selected отражает активный фильтр: selected сразу после value
+        // (пробелы нормализуем — Thymeleaf сохраняет переносы между атрибутами)
+        assertThat(html.replaceAll("\\s+", ""))
+                .contains("value=\"" + tagId + "\"selected");
+        assertThat(html).contains("only (1)");
+    }
+
+    /** (c) «Все теги» (пустой tag) → полный список, без индикатора фильтра. */
+    @Test
+    void selectFilterAllTagsShowsFullListWithoutIndicator() throws Exception {
+        registerUser("selfilter3");
+        var session = login("selfilter3");
+        String tagged = createEntry(session, "Селект-вторая");
+        createEntry(session, "Селект-первая");
+        createTag(session, "mark");
+        mockMvc.perform(post("/web/entries/" + tagged + "/tags")
+                        .session(session).with(csrf()).param("tagName", "mark"))
+                .andExpect(status().is3xxRedirection());
+
+        mockMvc.perform(get("/web/entries")
+                        .session(session).param("tag", ""))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Селект-вторая")))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Селект-первая")))
+                // Индикатор «Тег: ✕» не рендерится — фильтр не активен
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.not(
+                                org.hamcrest.Matchers.containsString("tag-filter\""))));
+    }
+
+    /** (e) У пользователя без тегов select не рендерится. */
+    @Test
+    void selectFilterAbsentForUserWithoutTags() throws Exception {
+        registerUser("selfilter4");
+        var session = login("selfilter4");
+        createEntry(session, "Без-тегов");
+        mockMvc.perform(get("/web/entries").session(session))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.not(
+                                org.hamcrest.Matchers.containsString("tag-filter-form"))));
+    }
+
+    /** (F1-i) Чужой tagId: подсказка, без индикатора, пустой список. */
+    @Test
+    void tagFilterWithForeignTagIdShowsHintAndEmptyList() throws Exception {
+        registerUser("tagowner1");
+        var ownerSession = login("tagowner1");
+        createTag(ownerSession, "foreign");
+        String foreignTagId = firstTagId(ownerSession);
+
+        registerUser("taguser2");
+        var session = login("taguser2");
+        createEntry(session, "Моя-запись");
+
+        mockMvc.perform(get("/web/entries")
+                        .session(session).param("tag", foreignTagId))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Тег не найден")))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.not(
+                                org.hamcrest.Matchers.containsString("class=\"tag-filter\""))))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Записей пока нет")));
+    }
+
+    /** (F1-ii) Удалённый tagId: то же поведение, что у чужого. */
+    @Test
+    void tagFilterWithDeletedTagIdShowsHintAndEmptyList() throws Exception {
+        registerUser("tagdeleter");
+        var session = login("tagdeleter");
+        createEntry(session, "Моя-запись");
+        createTag(session, "gone");
+        String tagId = firstTagId(session);
+        mockMvc.perform(post("/web/tags/" + tagId + "/delete")
+                        .session(session).with(csrf()))
+                .andExpect(status().is3xxRedirection());
+
+        mockMvc.perform(get("/web/entries")
+                        .session(session).param("tag", tagId))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Тег не найден")))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.not(
+                                org.hamcrest.Matchers.containsString("class=\"tag-filter\""))))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Записей пока нет")));
     }
 }

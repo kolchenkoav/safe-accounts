@@ -1,5 +1,5 @@
 /*
- * Общая клиентская логика веб-интерфейса (Фаза 2).
+ * Общая клиентская логика веб-интерфейса (Фаза 2; bfcache-фикс — Фаза 6).
  *
  * Inline-JS в HTML не используется (требование безопасности):
  * подтверждения опасных действий задаются атрибутом data-confirm
@@ -19,9 +19,25 @@
         });
     }
 
+    /* bfcache (fix F3): Safari игнорирует no-store в back/forward cache —
+       при возврате на страницу фильтра select может остаться disabled
+       (после сабмита). Явно снимаем disabled; политику пустого value
+       не пере-применяем — страница из bfcache уже отражает состояние
+       на момент ухода. */
+    function initBfcacheRecovery() {
+        window.addEventListener('pageshow', function (event) {
+            if (event.persisted) {
+                document.querySelectorAll('select:disabled').forEach(function (select) {
+                    select.disabled = false;
+                });
+            }
+        });
+    }
+
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initConfirmations);
     } else {
         initConfirmations();
     }
+    initBfcacheRecovery();
 })();

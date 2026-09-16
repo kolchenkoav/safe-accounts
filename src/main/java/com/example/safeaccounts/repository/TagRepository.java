@@ -20,7 +20,7 @@ public interface TagRepository extends JpaRepository<Tag, UUID> {
 
     Optional<Tag> findByUser_IdAndNameLower(UUID userId, String nameLower);
 
-    List<Tag> findAllByUser_Id(UUID userId);
+    List<Tag> findAllByUser_IdOrderByNameLowerAsc(UUID userId);
 
     /**
      * Теги записей одним запросом для страницы списка (без N+1):

@@ -95,11 +95,17 @@ public class WebVaultController {
         model.addAttribute("totalPages", items.getTotalPages());
         model.addAttribute("username", principal.getUsername());
         // Активный фильтр: id — для ссылок пагинации, name — для индикатора «Тег: ... ✕».
-        // Чужой/несуществующий tagId — без индикатора, просто пустой список.
-        tagService.findTag(principal.user(), tagId).ifPresent(found -> {
+        // Чужой/несуществующий/удалённый tagId — без индикатора, но с подсказкой
+        // «Тег не найден» (F1): список пуст, сценарий единообразен.
+        var foundTag = tagService.findTag(principal.user(), tagId);
+        foundTag.ifPresent(found -> {
             model.addAttribute("tagFilterId", found.getId());
             model.addAttribute("tagFilterName", found.getName());
         });
+        model.addAttribute("tagFilterUnknown", tagId != null && foundTag.isEmpty());
+        // Опции select-фильтра (Фаза 6): id/name/entryCount текущего пользователя;
+        // пусто — контрол не рендерится (th:if в шаблоне).
+        model.addAttribute("tagOptions", tagService.listWithEntryCounts(principal.user()));
         return "entries";
     }
 

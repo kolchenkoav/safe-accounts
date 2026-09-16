@@ -74,10 +74,10 @@ public class TagService {
 
     // -- list / find ----------------------------------------------------------
 
-    /** Все теги пользователя (отсортированы по name_lower — стабильно для UI). */
+    /** Все теги пользователя (ORDER BY name_lower — стабильно для UI). */
     @Transactional(readOnly = true)
     public List<Tag> listUserTags(User actor) {
-        return tagRepository.findAllByUser_Id(actor.getId());
+        return tagRepository.findAllByUser_IdOrderByNameLowerAsc(actor.getId());
     }
 
     /** Поиск тега пользователя с owner-check (тег принадлежит actor). */
@@ -353,8 +353,9 @@ public class TagService {
     }
 
     /**
-     * Теги пользователя с количеством записей (страница /web/tags).
-     * Порядок — как в {@link #listUserTags(User)} (name_lower).
+     * Теги пользователя с количеством записей (страница /web/tags и
+     * select-фильтр). Порядок — как в {@link #listUserTags(User)}:
+     * ORDER BY name_lower (репозиторий).
      */
     @Transactional(readOnly = true)
     public List<TagWithCount> listWithEntryCounts(User actor) {
@@ -363,7 +364,7 @@ public class TagService {
                 .collect(Collectors.toMap(
                         row -> (UUID) row[0],
                         row -> (Long) row[1]));
-        return tagRepository.findAllByUser_Id(actor.getId()).stream()
+        return tagRepository.findAllByUser_IdOrderByNameLowerAsc(actor.getId()).stream()
                 .map(t -> new TagWithCount(t.getId(), t.getName(),
                         counts.getOrDefault(t.getId(), 0L)))
                 .toList();

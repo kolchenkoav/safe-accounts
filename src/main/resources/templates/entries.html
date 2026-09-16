@@ -35,6 +35,11 @@
                 <a th:href="@{/web/entries}" title="Сбросить фильтр">✕</a>
             </div>
 
+            <!-- F1: активный tagId не найден (удалён/чужой/мусор) — подсказка -->
+            <div class="alert alert-info" th:if="${tagFilterUnknown}">
+                Тег не найден (удалён?) — <a th:href="@{/web/entries}">показать все записи</a>
+            </div>
+
             <a class="button" th:href="@{/web/entries/new}">+ Новая запись</a>
 
             <!-- CSV export/import для пользователя (Фаза 3) -->
@@ -53,6 +58,29 @@
                     <button type="submit" class="small">Экспорт CSV</button>
                 </form>
                 <a class="button" th:href="@{/web/entries/import}">Импорт CSV</a>
+
+                <!-- Явный фильтр по тегу (Фаза 6): GET-форма, кнопка —
+                     единственный путь сабмита (авто-submit убран — ломал
+                     клавиатурную навигацию по select). Форма передаёт
+                     только tag; page сбрасывается в 0. -->
+                <form
+                    th:action="@{/web/entries}"
+                    method="get"
+                    class="tag-filter-form"
+                    th:if="${!tagOptions.isEmpty()}"
+                >
+                    <select name="tag" aria-label="Фильтр по тегу">
+                        <option value="">Все теги</option>
+                        <option
+                            th:each="t : ${tagOptions}"
+                            th:value="${t.id}"
+                            th:text="${t.name + ' (' + t.entryCount + ')'}"
+                            th:selected="${tagFilterId != null && tagFilterId == t.id}"
+                            >tag</option
+                        >
+                    </select>
+                    <button type="submit" class="small">Фильтровать</button>
+                </form>
             </div>
 
             <table th:if="${!entries.isEmpty()}">
