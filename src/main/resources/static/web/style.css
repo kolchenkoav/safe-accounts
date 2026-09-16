@@ -298,6 +298,31 @@ a.button {
     margin-top: 0;
 }
 
+/* Страница «Записи сейфа» (fix-UI): контент на всю ширину окна минус
+   боковые отступы. Только для этой страницы — page-класс на <main> в
+   entries.html; остальные страницы сохраняют узкий центрированный .card.
+   Вертикальные отступы и padding карточки — прежние (.card). */
+main.page-entries {
+    max-width: none;
+    margin-left: 2rem;
+    margin-right: 2rem;
+}
+
+/* Панель Экспорт/Импорт (fix-UI): «Экспорт CSV» и «Импорт CSV» —
+   одинаковые размеры (min-width/padding/line-height/шрифт); цвета —
+   прежние переменные accent/accent-text, обе темы без изменений. */
+.export-import-panel button.small,
+.export-import-panel a.button {
+    min-width: 9rem;
+    padding: 0.45rem 0.9rem;
+    font-size: 0.9rem;
+    line-height: 1.25;
+    margin-top: 0;
+    display: inline-block;
+    text-align: center;
+    box-sizing: border-box;
+}
+
 label.checkbox {
     display: inline-flex;
     align-items: center;
