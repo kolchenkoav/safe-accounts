@@ -302,7 +302,7 @@ a.button {
    боковые отступы. Только для этой страницы — page-класс на <main> в
    entries.html; остальные страницы сохраняют узкий центрированный .card.
    Вертикальные отступы и padding карточки — прежние (.card). */
-main.page-entries {
+main.card.page-entries {
     max-width: none;
     margin-left: 2rem;
     margin-right: 2rem;
@@ -311,7 +311,7 @@ main.page-entries {
 /* Карточка записи (fix-UI): та же схема, что для списка — контент на всю
    ширину окна минус боковые отступы 2rem; вертикальные margin/padding —
    прежние от .card. */
-main.page-entry-view {
+main.card.page-entry-view {
     max-width: none;
     margin-left: 2rem;
     margin-right: 2rem;
@@ -320,8 +320,8 @@ main.page-entry-view {
 /* Страницы «Пользователи» и «Журнал аудита» (fix-UI): та же схема полной
    ширины, что для списка и карточки; вертикальные margin/padding — прежние
    от .card; остальной админ-раздел не затронут. */
-main.page-admin-users,
-main.page-admin-audit {
+main.card.page-admin-users,
+main.card.page-admin-audit {
     max-width: none;
     margin-left: 2rem;
     margin-right: 2rem;
