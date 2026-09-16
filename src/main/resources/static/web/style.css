@@ -308,6 +308,15 @@ main.page-entries {
     margin-right: 2rem;
 }
 
+/* Карточка записи (fix-UI): та же схема, что для списка — контент на всю
+   ширину окна минус боковые отступы 2rem; вертикальные margin/padding —
+   прежние от .card. */
+main.page-entry-view {
+    max-width: none;
+    margin-left: 2rem;
+    margin-right: 2rem;
+}
+
 /* Панель Экспорт/Импорт (fix-UI): «Экспорт CSV» и «Импорт CSV» —
    одинаковые размеры (min-width/padding/line-height/шрифт); цвета —
    прежние переменные accent/accent-text, обе темы без изменений. */

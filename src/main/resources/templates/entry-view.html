@@ -9,7 +9,8 @@
     <button type="button" th:replace="~{fragments :: themeToggle}"></button>
 </nav>
 
-<main class="card">
+    <!-- page-entry-view: карточка — во всю ширину окна (fix-UI, как page-entries) -->
+    <main class="card page-entry-view">
     <!-- Заголовок — name записи (fallback на site — на случай пустого name) -->
     <h1 th:text="${entry.name != null && !entry.name.isBlank() ? entry.name : entry.site}">Название</h1>
 
