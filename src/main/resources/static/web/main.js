@@ -322,6 +322,23 @@
         });
     }
 
+    /* Node-зависимость: модульные тесты генератора (src/test/js) выполняют
+       этот файл БЕЗ DOM — браузерная инициализация только в браузере,
+       наружу выставляются только чистые функции (init-модули требуют
+       document и не экспортируются). */
+    if (typeof document === 'undefined' || typeof window === 'undefined') {
+        module.exports = {
+            generatePassword: generatePassword,
+            randomBelow: randomBelow,
+            fisherYatesShuffle: fisherYatesShuffle,
+            PW_SYMBOLS: PW_SYMBOLS,
+            PW_MIN_LENGTH: PW_MIN_LENGTH,
+            PW_MAX_LENGTH: PW_MAX_LENGTH,
+            PW_DEFAULT_LENGTH: PW_DEFAULT_LENGTH
+        };
+        return;
+    }
+
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', function () {
             initConfirmations();

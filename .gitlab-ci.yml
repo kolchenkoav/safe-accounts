@@ -33,7 +33,9 @@ test:
   # Synology нестабилен; при возврате на общие раннеры gitlab.com вернуть сервис
   # docker:24.0.7-dind + DOCKER_HOST=tcp://docker:2375.
   script:
-    # verify запускает surefire (unit) и failsafe (интеграционные) отчёты.
+    # node — для node-тестов генератора паролей (exec-maven-plugin, фаза test).
+    - apk add --no-cache nodejs
+    # verify запускает surefire (unit), node-тесты генератора и failsafe (интеграционные) отчёты.
     - mvn -B verify
   artifacts:
     when: always

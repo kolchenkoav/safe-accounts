@@ -194,6 +194,32 @@
             </plugin>
 
             <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <!-- Node-тесты чистой логики генератора паролей (см.
+                             src/test/js/password-generator.test.js). Нужен node
+                             в PATH: локально установлен, в CI — apk add nodejs
+                             в test-job. Отключается -Dskip.js.tests=true. -->
+                        <id>password-generator-js-tests</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>node</executable>
+                            <arguments>
+                                <argument>${project.basedir}/src/test/js/password-generator.test.js</argument>
+                            </arguments>
+                            <skip>${skip.js.tests}</skip>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
                 <executions>
