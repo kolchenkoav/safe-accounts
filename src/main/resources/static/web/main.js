@@ -29,6 +29,11 @@
     function initBfcacheRecovery() {
         window.addEventListener('pageshow', function (event) {
             if (event.persisted) {
+                /* Просроченный таймер автоочистки буфера после возврата из
+                   bfcache должен быть снят: пользователь мог скопировать
+                   что-то в другом приложении, а сработавший по таймеру
+                   copyToClipboard('') стёр бы его содержимое. */
+                cancelClipboardClear();
                 document.querySelectorAll('select:disabled').forEach(function (select) {
                     select.disabled = false;
                 });

@@ -27,6 +27,10 @@
         <springdoc.version>2.5.0</springdoc.version>
         <bouncycastle.version>1.78.1</bouncycastle.version>
         <testcontainers.version>1.19.8</testcontainers.version>
+        <!-- Node-тесты генератора (exec-maven-plugin): по умолчанию включены;
+             автоматически выключаются при -DskipTests (см. профиль ниже),
+             вручную — -Dskip.js.tests=true. -->
+        <skip.js.tests>false</skip.js.tests>
     </properties>
 
     <dependencyManagement>
@@ -243,5 +247,23 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- Node-тесты генератора требуют node в PATH; на сборках без тестов
+             (mvn package -DskipTests, Dockerfile, build-джоба CI) их нет и
+             не нужно: при skipTests=true автоматически выключаем и exec. -->
+        <profile>
+            <id>skip-tests-skips-js</id>
+            <activation>
+                <property>
+                    <name>skipTests</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <properties>
+                <skip.js.tests>true</skip.js.tests>
+            </properties>
+        </profile>
+    </profiles>
 
 </project>

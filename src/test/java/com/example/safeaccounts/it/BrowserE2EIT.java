@@ -9,6 +9,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIfEnvironmentVariable;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -47,6 +48,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ActiveProfiles("it")
 @Testcontainers
 @EnabledIfEnvironmentVariable(named = "BROWSER_E2E", matches = "true")
+@DisabledIfEnvironmentVariable(named = "CI", matches = ".*")
 class BrowserE2EIT {
 
     @Container

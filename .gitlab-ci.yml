@@ -28,7 +28,10 @@ cache:
 # ---------------------------------------------------------------------------
 test:
   stage: test
-  image: maven:3.9-eclipse-temurin-21
+  # Alpine-база: apk для установки node (node-тесты генератора). Docker CLI
+  # джоба не использует — Testcontainers ходят через /var/run/docker.sock
+  # (volume раннера), путь не зависит от базы образа.
+  image: maven:3.9-eclipse-temurin-21-alpine
   # Используем Docker daemon хоста (раннер пробрасывает /var/run/docker.sock) — dind на
   # Synology нестабилен; при возврате на общие раннеры gitlab.com вернуть сервис
   # docker:24.0.7-dind + DOCKER_HOST=tcp://docker:2375.

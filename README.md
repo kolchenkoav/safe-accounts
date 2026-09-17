@@ -112,6 +112,14 @@ docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --build
 - Внешние сервисы не требуются; тестовый мастер-ключ — фиксированный, только
   в тестовом профиле, синтетические значения.
 
+> **Требования к инструментам для тестов.** `mvnw test`/`verify` запускают
+> node-тесты генератора паролей — нужен **Node ≥ 19** в PATH (в CI
+> устанавливается автоматически). Отключить: `-Dskip.js.tests=true`
+> (а `-DskipTests`/`-DskipTests=true` пропускает их автоматически —
+> профиль `skip-tests-skips-js`). Браузерные E2E (`BrowserE2EIT`) запускаются
+> только при `BROWSER_E2E=true` (env): Playwright при первом прогоне скачивает
+> браузеры (~150 МБ в `~/.cache/ms-playwright`).
+
 ## Где лежат скрипты
 
 | Скрипт | Назначение |
