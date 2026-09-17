@@ -191,8 +191,7 @@
         });
     }
 
-    /* ------------------------------------------------------------------
-     * Копирование в буфер (Фаза 2, план feat-password-generator-copy §3).
+    /* Копирование в буфер (Фаза 2, план feat-password-generator-copy §3).
      *
      * copyToClipboard(text) → Promise<boolean>: сначала navigator.clipboard
      * (доступен только в secure context), при исключении/отсутствии —
@@ -204,6 +203,31 @@
      * ------------------------------------------------------------------ */
     var TOAST_HIDE_DELAY_MS = 2500;
     var TOAST_FADE_MS = 300;
+    /* Автоочистка буфера (отложенный пункт плана): 30 с — распространённое
+       соглашение менеджеров паролей: достаточно вставить пароль, мало для
+       «подобрать чужой буфер». Очистка только после копирования ПАРОЛЯ;
+       таймер сбрасывается любым новым копированием на странице. */
+    var CLIPBOARD_CLEAR_DELAY_MS = 30000;
+    var clipboardClearTimer = null;
+
+    function cancelClipboardClear() {
+        if (clipboardClearTimer !== null) {
+            window.clearTimeout(clipboardClearTimer);
+            clipboardClearTimer = null;
+        }
+    }
+
+    function scheduleClipboardClear() {
+        cancelClipboardClear();
+        clipboardClearTimer = window.setTimeout(function () {
+            clipboardClearTimer = null;
+            copyToClipboard('').then(function (ok) {
+                if (ok) {
+                    showToast('Буфер очищен', 'ok');
+                }
+            });
+        }, CLIPBOARD_CLEAR_DELAY_MS);
+    }
 
     /* ES5-стиль (Promise-цепочка, без async/await): старые движки должны
        распарсить весь файл, иначе отвалятся и data-confirm-обработчики. */
@@ -283,6 +307,13 @@
                 copyToClipboard(value).then(function (ok) {
                     if (ok) {
                         showToast(field === 'password' ? 'Пароль скопирован' : 'Логин скопирован', 'ok');
+                        /* Пароль в буфере — планируем автоочистку; логин и любое
+                           новое копирование сбрасывают предыдущий таймер. */
+                        if (field === 'password') {
+                            scheduleClipboardClear();
+                        } else {
+                            cancelClipboardClear();
+                        }
                     } else {
                         showToast('Не удалось скопировать', 'error');
                     }
