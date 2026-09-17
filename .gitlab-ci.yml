@@ -147,7 +147,15 @@ deploy:
 # Стадия cleanup — удаляем на NAS старые образы: остаются 3 последние версии
 # и latest. Портируемая реализация для busybox/alpine: без head -n -N.
 # latest исключается фильтром; используемые контейнерами образы docker rmi
-# не удаляет; ошибки гасит финальный "|| true".
+# не удаляет.
+#
+# Best-effort, но НАБЛЮДАЕМЫЙ: docker CLI берётся по тому же PATH, что в
+# deploy-джобе (в неинтерактивной ssh-сессии DSM docker не в PATH), а каждый
+# кандидат логируется отдельно ("removed <tag>" / "skip <tag>: <причина>") —
+# вместо общего "|| true" на всю цепочку, который делал неудачи чистки
+# невидимыми (молчаливо-зелёный job, тот же класс сбоя, что чинили в deploy).
+# Падение чистки не должно валить пайплайн: ошибки логируются, remote-скрипт
+# завершается кодом 0. Login/logout здесь не нужны — registry не трогаем.
 # ---------------------------------------------------------------------------
 cleanup:
   stage: cleanup
@@ -175,10 +183,22 @@ cleanup:
 
     - |
       ssh -i ~/.ssh/ci_cd_key -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes "$NAS_SSH_USER@$NAS_SSH_HOST" \
-        "set -e && docker images --format '{{.Repository}}:{{.Tag}}' | \
+        "export PATH=/var/packages/ContainerManager/target/usr/bin:/var/packages/ContainerManager/target/usr/lib/docker/cli-plugins:/var/packages/ContainerManager/target/usr/libexec/docker/cli-plugins:/var/packages/Docker/target/usr/bin:/usr/local/bin:\$PATH; \
+         command -v docker >/dev/null 2>&1 || { echo 'WARN: docker CLI not found in PATH (check ContainerManager package paths)'; exit 0; }; \
+         docker images --format '{{.Repository}}:{{.Tag}}' | \
          awk -F: -v p=\"$CI_REGISTRY_IMAGE\" '\$1 == p && \$2 !~ /^latest$/ { split(\$2, t, /\\./); print t[length(t)] + 0, \$0 }' | \
-         sort -nr -k1,1 | awk 'NR > 3 { s = \$2; for (i = 3; i <= NF; i++) s = s OFS \$i; print s }' | \
-         xargs -r docker rmi -f || true"
+         sort -nr -k1,1 | awk 'NR > 3 { s = \$2; for (i = 3; i <= NF; i++) s = s OFS \$i; print s }' > /tmp/safe-accounts-cleanup.list; \
+         total=\$(wc -l < /tmp/safe-accounts-cleanup.list | tr -d ' '); \
+         echo \"cleanup: candidates=\${total:-0}\"; \
+         removed=0; skipped=0; \
+         while IFS= read -r img; do \
+           [ -n \"\$img\" ] || continue; \
+           if out=\$(docker rmi -f \"\$img\" 2>&1); then echo \"cleanup: removed \$img\"; removed=\$((removed + 1)); \
+           else echo \"cleanup: skip \$img: \$(printf '%s' \"\$out\" | head -n 1)\"; skipped=\$((skipped + 1)); fi; \
+         done < /tmp/safe-accounts-cleanup.list; \
+         rm -f /tmp/safe-accounts-cleanup.list; \
+         echo \"cleanup: done (removed=\$removed, skipped=\$skipped) — best-effort, пайплайн не валим\"; \
+         exit 0"
   rules:
     - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "main"
     - if: $CI_COMMIT_TAG
