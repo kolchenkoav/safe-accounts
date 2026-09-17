@@ -38,12 +38,47 @@
 | `test` | `mvn -B verify` | unit-тесты (surefire) и интеграционные тесты на Testcontainers (failsafe); Docker через host socket раннера |
 | `build` | `mvn -B package -DskipTests` | собирает `target/safe-accounts.jar` |
 | `docker` | `docker build --platform linux/amd64` | собирает и пушит `$CI_REGISTRY_IMAGE:$VERSION` и `$CI_REGISTRY_IMAGE:latest` |
-| `deploy` | `scp` + `ssh` | копирует compose-файлы на NAS, `docker compose pull app`, `up -d` |
+| `deploy` | `tar` + `ssh` | копирует compose-файлы на NAS через tar-over-ssh, затем в одной ssh-команде: `docker info` → `docker compose version` → `docker login` → `compose down --remove-orphans --timeout 30` → `compose pull app` → `up -d`; `docker logout` — отдельной ssh-командой |
 | `cleanup` | `ssh` + `docker rmi` | оставляет на NAS 3 последние версии образа и `latest`, старые удаляет |
 
 Версия образа: тег (`CI_COMMIT_TAG`) либо `1.0.<номер пайплайна>` для веток
 `master`/`main`. Полный пайплайн (с `deploy`/`cleanup`) запускается только
 для `master`/`main` и тегов; остальные ветки проходят `test` и `build`.
+
+### Как именно выполняется деплой (фактическая ssh-цепочка)
+
+Подробный разбор пайплайна (включая `cleanup`) — `.tasks/ci-cd/gitlab-ci-pipeline.md`.
+
+- **Копирование файлов — tar-over-ssh, а не `scp`.** SFTP-подсистема DSM не
+  видит абсолютные пути `/volume1/...` и падает с `scp: remote mkdir: No such
+  file or directory`, при этом `ssh ... mkdir -p` работает. Поэтому файлы льются
+  потоком: `tar -cf - docker-compose.yml docker-compose.synology.yml
+  docker-compose.deploy.yml | ssh ... "mkdir -p /volume1/docker/safe-accounts
+  && tar -xf - -C /volume1/docker/safe-accounts/"`.
+- **PATH для docker CLI.** В неинтерактивной ssh-сессии DSM `docker` не в
+  `PATH` (пакет Container Manager держит CLI в
+  `/var/packages/ContainerManager/target/usr/bin`), поэтому цепочка начинается
+  с `export PATH=/var/packages/ContainerManager/target/usr/bin:...:/var/packages/Docker/target/usr/bin:/usr/local/bin:$PATH`.
+- **Одна ssh-команда с `set -e`**: `docker info` (быстрый фейл, если демон
+  недоступен) → `docker compose version` (диагностика версии Compose) →
+  `docker login` (пароль через `--password-stdin`, токен не попадает в лог) →
+  `docker compose ... down --remove-orphans --timeout 30` → `... pull app` →
+  `... up -d`.
+- **Префикс `SAFE_ACCOUNTS_IMAGE="$CI_REGISTRY_IMAGE:$VERSION"` обязателен для
+  КАЖДОЙ compose-команды** (включая `down`): `docker-compose.deploy.yml`
+  объявляет `image: ${SAFE_ACCOUNTS_IMAGE:?...}`, и Compose интерполирует это
+  при любой команде.
+- **`down` перед `up` — осознанно**: `up -d` сам не пересоздаёт контейнер при
+  изменении конфигурации (например, `ports`), а `--remove-orphans` убирает
+  контейнеры от старых имён сервисов. Данные БД лежат в volume
+  `safe-accounts_pgdata` и при `down` (без `-v`) сохраняются.
+- **`docker logout` — отдельной ssh-командой** после деплой-цепочки: если
+  дописать его в ту же цепочку через `; ... || true`, он маскирует код возврата
+  деплоя и job покажет успех при упавшем деплое.
+- **Порт БД не публикуется**: на NAS 5432 занят PostgreSQL другого приложения,
+  поэтому в базовом `docker-compose.yml` у сервиса `db` нет секции `ports`;
+  для локальной разработки — `docker-compose.dev.yml`, вход в БД на NAS —
+  `docker exec -it safe-accounts-db-1 psql -U <user> <db>`.
 
 ### Настройка GitLab
 
@@ -65,7 +100,7 @@
 
 | Переменная | Тип в GitLab | Назначение |
 |---|---|---|
-| `NAS_SSH_HOST` | Variable, Masked | IP-адрес или DNS-имя NAS для `ssh`/`scp` |
+| `NAS_SSH_HOST` | Variable, Masked | IP-адрес или DNS-имя NAS для `ssh` (файлы передаются tar-over-ssh) |
 | `NAS_SSH_USER` | Variable, Masked | SSH-пользователь на NAS (член группы `docker`) |
 | `NAS_SSH_PRIVATE_KEY` | File (ed25519) | закрытый SSH-ключ для подключения к NAS; содержимое файла — приватный ключ |
 | `NAS_REGISTRY_USER` | Variable, Masked | имя Deploy token (Username вида `gitlab+deploy-token-*`) |
