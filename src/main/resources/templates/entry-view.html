@@ -39,15 +39,37 @@
                 <dd th:text="${entry.site}"></dd>
 
                 <dt>Логин</dt>
-                <dd th:text="${entry.login}"></dd>
+                <dd class="value-with-copy">
+                    <!-- Копирование логина (Фаза 2): кнопка всегда (логин в DOM всегда) -->
+                    <span th:text="${entry.login}"></span>
+                    <button
+                        type="button"
+                        class="link btn-copy"
+                        data-copy-field="login"
+                    >
+                        Скопировать
+                    </button>
+                </dd>
 
                 <dt>Пароль</dt>
-                <dd>
-                    <!-- Пароль отображается только после явного POST /reveal (аудит SECRET_REVEALED) -->
+                <dd class="value-with-copy">
+                    <!-- Пароль отображается только после явного POST /reveal (аудит SECRET_REVEALED).
+                         Маркер для JS-копирования рендерится ТОЛЬКО в revealed-ветке: пароль не
+                         попадает в data-атрибуты и не виден до reveal. Кнопка копирования —
+                         rendered absence до reveal (не disabled-заглушка). -->
                     <span
                         th:if="${revealed}"
                         th:text="${entry.password}"
+                        data-secret-value
                     ></span>
+                    <button
+                        type="button"
+                        class="link btn-copy"
+                        th:if="${revealed}"
+                        data-copy-field="password"
+                    >
+                        Скопировать
+                    </button>
                     <form
                         th:if="${!revealed}"
                         th:action="@{/web/entries/{id}/reveal(id=${entryId})}"

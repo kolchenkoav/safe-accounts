@@ -557,3 +557,53 @@ td {
     flex-basis: 100%;
     font-size: 0.75rem;
 }
+
+/* Фаза 2 (password-generator-copy): копирование логина/пароля на карточке. */
+.btn-copy {
+    font-size: 0.8rem;
+    padding: 0.1rem 0.5rem;
+    margin-left: 0.5rem;
+}
+
+.value-with-copy span {
+    overflow-wrap: anywhere;
+}
+
+/* Toast: фикс внизу экрана, обе темы через переменные с нейтральными
+   фолбэками (контейнер создается лениво в body). */
+.toast-container {
+    position: fixed;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    z-index: 1000;
+}
+
+.toast {
+    background: var(--toast-bg, #1f2937);
+    color: var(--toast-fg, #f9fafb);
+    border: 1px solid var(--border, #374151);
+    border-radius: 6px;
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+    opacity: 1;
+    transition: opacity 0.3s ease;
+}
+
+.toast-error {
+    border-color: #dc2626;
+}
+
+.toast-hide {
+    opacity: 0;
+}
+
+@media (max-width: 600px) {
+    .toast-container {
+        width: calc(100% - 2rem);
+        align-items: center;
+    }
+}

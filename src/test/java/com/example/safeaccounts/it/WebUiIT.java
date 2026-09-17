@@ -920,6 +920,51 @@ class WebUiIT {
                         org.hamcrest.Matchers.containsString(generated)));
     }
 
+    // -- 11. Копирование логина/пароля (Фаза 2 password-generator-copy) --------
+
+    /** До reveal: кнопка логина есть, кнопки пароля НЕТ; пароль не в DOM/дата-атрибутах. */
+    @Test
+    void entryViewBeforeRevealHasLoginCopyButNoPasswordCopy() throws Exception {
+        registerUser("copyuser");
+        MockHttpSessionHolder holder = login("copyuser");
+        createEntry(holder, "Запись для копирования", "https://example.com", "alice-login", ENTRY_PASSWORD);
+        String entryId = firstEntryId(holder);
+
+        MvcResult view = mockMvc.perform(get("/web/entries/" + entryId).session(holder.session()))
+                .andExpect(status().isOk())
+                .andExpect(view().name("entry-view"))
+                .andReturn();
+        String html = htmlOf(view);
+        assertThat(html).contains("data-copy-field=\"login\"");
+        // Кнопка пароля — rendered absence до reveal (не disabled-заглушка)
+        assertThat(html).doesNotContain("data-copy-field=\"password\"");
+        // (c) пароль не появляется в DOM (в т.ч. в data-* атрибутах) до reveal
+        assertThat(html).doesNotContain(ENTRY_PASSWORD);
+        assertThat(html).doesNotContain("data-secret-value");
+        // (d) без inline-JS
+        assertThat(html).doesNotContain("onclick=").doesNotContain("onsubmit=");
+    }
+
+    /** После reveal: обе кнопки на месте; маркер data-secret-value присутствует. */
+    @Test
+    void entryViewAfterRevealHasBothCopyButtons() throws Exception {
+        registerUser("copyuser2");
+        MockHttpSessionHolder holder = login("copyuser2");
+        createEntry(holder, "Запись для копирования 2", "https://example.com", "bob-login", ENTRY_PASSWORD);
+        String entryId = firstEntryId(holder);
+
+        mockMvc.perform(post("/web/entries/" + entryId + "/reveal")
+                        .session(holder.session())
+                        .with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(view().name("entry-view"))
+                .andExpect(content().string(org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString("data-copy-field=\"login\""),
+                        org.hamcrest.Matchers.containsString("data-copy-field=\"password\""),
+                        org.hamcrest.Matchers.containsString("data-secret-value"),
+                        org.hamcrest.Matchers.containsString("btn-copy"))));
+    }
+
     private static String htmlOf(MvcResult result)
             throws java.io.UnsupportedEncodingException {
         return result.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);

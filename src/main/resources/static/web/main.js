@@ -179,14 +179,115 @@
         });
     }
 
+    /* ------------------------------------------------------------------
+     * Копирование в буфер (Фаза 2, план feat-password-generator-copy §3).
+     *
+     * copyToClipboard(text) → Promise<boolean>: сначала navigator.clipboard
+     * (доступен только в secure context), при исключении/отсутствии —
+     * fallback: временный textarea вне вьюпорта + execCommand('copy')
+     * (deprecated, но работает на HTTP-деплое NAS). Двойной отказ → false.
+     * showToast(message, kind): контейнер .toast-container в body
+     * (создаётся лениво), .toast .toast-ok/.toast-error, авто-скрытие 2.5 с.
+     * Никаких alert(); console.log значений нет.
+     * ------------------------------------------------------------------ */
+    var TOAST_HIDE_DELAY_MS = 2500;
+    var TOAST_FADE_MS = 300;
+
+    async function copyToClipboard(text) {
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(text);
+                return true;
+            }
+        } catch (e) {
+            /* secure context отсутствует или доступ запрещен — fallback ниже */
+        }
+        return copyViaExecCommand(text);
+    }
+
+    function copyViaExecCommand(text) {
+        var textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'absolute';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        var ok = false;
+        try {
+            ok = document.execCommand('copy');
+        } catch (e) {
+            ok = false;
+        }
+        document.body.removeChild(textarea);
+        return ok;
+    }
+
+    function showToast(message, kind) {
+        var container = document.querySelector('.toast-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.className = 'toast-container';
+            document.body.appendChild(container);
+        }
+        var toast = document.createElement('div');
+        toast.className = 'toast ' + (kind === 'error' ? 'toast-error' : 'toast-ok');
+        toast.textContent = message;
+        container.appendChild(toast);
+        window.setTimeout(function () {
+            toast.classList.add('toast-hide');
+            window.setTimeout(function () {
+                toast.remove();
+            }, TOAST_FADE_MS);
+        }, TOAST_HIDE_DELAY_MS);
+    }
+
+    /* Кнопки [data-copy-field="login"|"password"]: значение берется из
+       ближайшего dd. Логин — текст span в dd (всегда в DOM). Пароль —
+       span[data-secret-value] в dd: этот span рендерится ТОЛЬКО в
+       revealed-ветке (появляется вместе с кнопкой пароля), поэтому пароль
+       не попадает в data-атрибуты и не виден до явного POST /reveal
+       (аудит SECRET_REVEALED пишет сервер). */
+    function initClipboardButtons() {
+        document.querySelectorAll('[data-copy-field]').forEach(function (button) {
+            button.addEventListener('click', function () {
+                var field = button.getAttribute('data-copy-field');
+                var dd = button.closest('dd');
+                var value = '';
+                if (dd) {
+                    if (field === 'password') {
+                        var secret = dd.querySelector('[data-secret-value]');
+                        value = secret ? secret.textContent : '';
+                    } else {
+                        var valueSpan = dd.querySelector('span');
+                        value = valueSpan ? valueSpan.textContent : '';
+                    }
+                }
+                if (!value) {
+                    showToast('Нечего копировать — значение не найдено', 'error');
+                    return;
+                }
+                copyToClipboard(value).then(function (ok) {
+                    if (ok) {
+                        showToast(field === 'password' ? 'Пароль скопирован' : 'Логин скопирован', 'ok');
+                    } else {
+                        showToast('Не удалось скопировать', 'error');
+                    }
+                });
+            });
+        });
+    }
+
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', function () {
             initConfirmations();
             initPasswordTools();
+            initClipboardButtons();
         });
     } else {
         initConfirmations();
         initPasswordTools();
+        initClipboardButtons();
     }
     initBfcacheRecovery();
 })();
