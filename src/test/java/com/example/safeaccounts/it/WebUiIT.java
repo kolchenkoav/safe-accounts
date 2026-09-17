@@ -848,6 +848,78 @@ class WebUiIT {
         assertThat(htmlOf(view)).doesNotContain("<script>");
     }
 
+    // -- 10. Генератор пароля + глаз (Фаза 1 password-generator-copy) ----------
+
+    /** Разметка генератора/глаза есть в обеих формах; без inline-JS. */
+    @Test
+    void passwordGeneratorMarkupPresentInCreateAndEditForms() throws Exception {
+        registerUser("pwgenuser");
+        MockHttpSessionHolder holder = login("pwgenuser");
+
+        MvcResult create = mockMvc.perform(get("/web/entries/new").session(holder.session()))
+                .andExpect(status().isOk())
+                .andExpect(view().name("entry-form"))
+                .andReturn();
+        String createHtml = htmlOf(create);
+        assertThat(createHtml).contains("data-generate-password")
+                .contains("data-toggle-password")
+                .contains("data-password-field")
+                .contains("data-pw-length")
+                .contains("data-pw-symbols")
+                .contains("data-pw-avoid-ambiguous");
+        assertThat(createHtml).containsPattern("(?s)data-pw-length[^>]*value=\"20\"");
+        assertThat(createHtml).containsPattern("(?s)data-pw-symbols[^>]*checked");
+        assertThat(createHtml).containsPattern("(?s)data-pw-avoid-ambiguous[^>]*checked");
+        // (c) без inline-JS: ни обработчиков, ни javascript:-URL
+        assertThat(createHtml).doesNotContain("onclick=")
+                .doesNotContain("onsubmit=")
+                .doesNotContain("javascript:");
+
+        createEntry(holder, "Запись-редактирование", "https://example.com", "alice", ENTRY_PASSWORD);
+        String entryId = firstEntryId(holder);
+        MvcResult edit = mockMvc.perform(get("/web/entries/" + entryId + "/edit").session(holder.session()))
+                .andExpect(status().isOk())
+                .andExpect(view().name("entry-form-edit"))
+                .andReturn();
+        String editHtml = htmlOf(edit);
+        assertThat(editHtml).contains("data-generate-password")
+                .contains("data-toggle-password")
+                .contains("data-password-field")
+                .contains("data-pw-length")
+                .contains("data-pw-symbols")
+                .contains("data-pw-avoid-ambiguous");
+        assertThat(editHtml).containsPattern("(?s)data-pw-length[^>]*value=\"20\"");
+        assertThat(editHtml).containsPattern("(?s)data-pw-symbols[^>]*checked");
+        assertThat(editHtml).doesNotContain("onclick=").doesNotContain("onsubmit=");
+    }
+
+    /**
+     * (b) Сабмит с «сгенерированным» паролем (строка из алфавита генератора:
+     * строчные/заглавные/цифры + `!@#$%^&*-_=+?`) проходит обычный CRUD-цикл:
+     * создание → карточка → reveal возвращает пароль без искажений.
+     */
+    @Test
+    void entryCreatedWithGeneratedStylePasswordSurvivesCreateViewReveal() throws Exception {
+        registerUser("pwgenflow");
+        MockHttpSessionHolder holder = login("pwgenflow");
+
+        String generated = "qW7-Kd2=mN5+Lz1?aB3#xY9!";
+        createEntry(holder, "Сгенерированная запись", "https://example.com", "alice", generated);
+
+        String entryId = firstEntryId(holder);
+        mockMvc.perform(get("/web/entries/" + entryId).session(holder.session()))
+                .andExpect(status().isOk())
+                .andExpect(view().name("entry-view"));
+
+        mockMvc.perform(post("/web/entries/" + entryId + "/reveal")
+                        .session(holder.session())
+                        .with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(view().name("entry-view"))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString(generated)));
+    }
+
     private static String htmlOf(MvcResult result)
             throws java.io.UnsupportedEncodingException {
         return result.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);

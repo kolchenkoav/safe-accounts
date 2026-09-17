@@ -525,3 +525,35 @@ th,
 td {
     overflow-wrap: anywhere;
 }
+
+/* Фаза 1 (password-generator-copy): поле пароля + глаз + генератор.
+   Цветов нет — контролы наследуют тему через глобальные input/button стили. */
+.input-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.input-group input[data-password-field] {
+    flex: 1 1 14rem;
+    width: auto;
+}
+
+.password-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    align-items: center;
+    margin: 0.25rem 0 0.75rem;
+    font-size: 0.85rem;
+}
+
+.password-options input[type="number"] {
+    width: 5rem;
+}
+
+.password-options .muted {
+    flex-basis: 100%;
+    font-size: 0.75rem;
+}

@@ -31,7 +31,22 @@
         <input type="text" id="login" th:field="*{login}" required maxlength="2048">
 
         <label for="password">Пароль (введите заново)</label>
-        <input type="password" id="password" th:field="*{password}" required maxlength="4096">
+        <!-- input-group: поле + глаз + генератор (Фаза 1 password-generator-copy).
+             Генерация перезаписывает поле «введите заново» — это ок: старый пароль
+             в HTML не выносится (безопасность Task-11). -->
+        <div class="input-group">
+            <input type="password" id="password" th:field="*{password}" required maxlength="4096"
+                   data-password-field autocomplete="new-password">
+            <button type="button" class="small" data-toggle-password>Показать</button>
+            <button type="button" class="small" data-generate-password>Сгенерировать</button>
+        </div>
+        <!-- Опции генератора: всегда видимы; серверная валидация (@Size) — страховка -->
+        <div class="password-options">
+            <label>Длина <input type="number" data-pw-length min="12" max="64" value="20"></label>
+            <label><input type="checkbox" data-pw-symbols checked> Спецсимволы</label>
+            <label><input type="checkbox" data-pw-avoid-ambiguous checked> Без неоднозначных (0 O 1 l I)</label>
+            <span class="muted">Сгенерированный пароль показан открыто — проверьте и сохраните</span>
+        </div>
 
         <label for="notes">Примечание</label>
         <textarea id="notes" th:field="*{notes}" maxlength="8192" rows="4"></textarea>
