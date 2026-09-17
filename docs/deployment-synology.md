@@ -165,6 +165,18 @@
    пакет Docker), иначе первый же `docker compose pull` завершится ошибкой
    про неизвестную опцию конфигурации `pull_policy`.
 
+   > **Версия Compose на конкретном NAS.** Зафиксирован **Compose v2.20.1**
+   > (`docker compose version` в логе деплоя). В этой версии YAML-теги
+   > `!override` / `!reset` **молча игнорируются**: оверлей
+   > `ports: !override []` не отменяет, а **дополняет** базовый список
+   > `ports` (Compose конкатенирует списки) — исторический инцидент: у
+   > контейнера БД появился бинд `0.0.0.0:5432`, который на NAS занят
+   > PostgreSQL другого приложения. Поэтому секция `ports` у сервиса `db`
+   > в базовом `docker-compose.yml` отсутствует вовсе (см. §8), а
+   > `docker-compose.dev.yml` с публикацией порта — только для локальной
+   > разработки. Если порт публиковать всё же нужно — добавляйте явно и
+   > только после проверки занятости порта на NAS (`netstat` / `ss -ltn`).
+
    > **NAS_REGISTRY_USER / NAS_REGISTRY_TOKEN** раскрываются **на стороне
    > NAS** — внутри ssh-команды деплоя, поэтому обязаны быть доступны в
    > окружении SSH-пользователя на момент выполнения. Практически их
@@ -192,6 +204,30 @@
    # или осторожно: docker container prune -f
    ```
 
+### Раннер (docker-runner-synology) — почему CI работает без dind
+
+Раннер `docker-runner-synology` работает **на самом NAS** (Docker executor,
+тег `docker` — см. `default.tags` в `.gitlab-ci.yml`). В `config.toml` секция
+`[runners.docker]` прокидывает в контейнер джобы два volume:
+`/var/run/docker.sock:/var/run/docker.sock` и `/cache` (п. 7 выше).
+
+Почему **не dind**: вложенный Docker на DSM нестабилен — контейнер
+`docker:dind` переиспользуется между запусками («Service docker:24.0.7-dind
+is already created. Ignoring.»), демон внутри не поднимается («can't create
+unix socket /var/run/docker.sock: device or resource busy»), health-check
+сервиса таймаутит, job падает.
+
+С host-socket: `docker` CLI в джобах `docker`/`deploy`/`cleanup` и
+Testcontainers в джобе `test` берут сокет демона NAS по умолчанию; образы
+docker-стадии уже лежат на NAS. Практическое следствие при сбое compose
+`up`: «образы есть, приложения нет» — начните диагностику с `docker images`
+и `docker ps -a` на NAS.
+
+При переезде на общие раннеры gitlab.com верните сервис `docker:dind` и
+`DOCKER_HOST=tcp://docker:2375` (комментарий-напоминание уже есть в
+`.gitlab-ci.yml`) и обеспечьте сетевую доступность NAS из раннеров.
+Подробный разбор пайплайна — `.tasks/ci-cd/gitlab-ci-pipeline.md` (§6).
+
 ### Первый запуск
 
 1. **Один раз, вручную** выполните «Шаг 2. Подготовить `.env`» (раздел 4) и,
@@ -201,14 +237,23 @@
    на NAS при каждом деплое — обновлять их вручную на NAS не нужно.
 2. Запустите пайплайн на ветке `master`/`main` (или создайте тег).
    Джоба `deploy`:
-   - скопирует compose-файлы в `/volume1/docker/safe-accounts/`;
+   - скопирует compose-файлы в `/volume1/docker/safe-accounts/`
+     (tar-over-ssh — `scp` на DSM не видит `/volume1/...`, см. раздел выше);
    - залогинится в registry Deploy token'ом
-     (`NAS_REGISTRY_USER`/`NAS_REGISTRY_TOKEN`);
-   - выполнит `SAFE_ACCOUNTS_IMAGE=$CI_REGISTRY_IMAGE:$VERSION`
+     (`NAS_REGISTRY_USER`/`NAS_REGISTRY_TOKEN`, пароль через
+     `--password-stdin`);
+   - в одной ssh-команде с `set -e` выполнит `docker info`,
+     `docker compose version`, затем с префиксом
+     `SAFE_ACCOUNTS_IMAGE=$CI_REGISTRY_IMAGE:$VERSION`:
      `docker compose -f docker-compose.yml -f docker-compose.synology.yml
-     -f docker-compose.deploy.yml pull app`;
-   - поднимет контейнер `... up -d` (без `down` — контейнеры и данные
-     не теряются).
+     -f docker-compose.deploy.yml down --remove-orphans --timeout 30` →
+     `... pull app` → `... up -d` (префикс обязателен для **каждой**
+     compose-команды — интерполяция образа идет и на `down`);
+   - отдельно (другой ssh-командой) сделает `docker logout` — так падение
+     деплоя не маскируется кодом возврата logout.
+
+   Данные БД в volume `pgdata` при `down` (без `-v`) сохраняются; миграции
+   Flyway применяются при старте приложения.
 3. Проверка — раздел 7 («Шаг 4. Проверка»).
 
 ### Ручной откат
@@ -368,8 +413,10 @@ Healthcheck `app` имеет `start_period: 60s` — сразу после за�
 Решение — override-файл `docker-compose.synology.yml`: он отвечает только за
 автоперезапуск `db` после ребута NAS. Публикацию порта БД убрали из базового
 `docker-compose.yml`: на NAS порт `5432` занят PostgreSQL другого приложения,
-а вариант с `!override []` здесь не подходит — Compose в Container Manager
-(DSM) старой версии молча игнорирует тег. Файл уже в репозитории; при деплое
+а вариант с `!override []` здесь не подходит — Compose v2.20.1 в Container
+Manager (DSM) молча игнорирует теги `!override` / `!reset` (подробности и
+история инцидента с биндом `0.0.0.0:5432` — §2, «Версия Compose на конкретном
+NAS»). Файл уже в репозитории; при деплое
 через GitLab CI он синхронизируется на NAS автоматически (раздел 2). При
 ручном способе убедитесь, что файл есть в корне проекта:
 
