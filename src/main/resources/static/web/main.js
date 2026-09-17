@@ -44,8 +44,9 @@
      * IT + ручным smoke). Опции:
      *   length          12–64, default 20;
      *   includeSymbols  default true — класс `!@#$%^&*-_=+?`;
-     *   avoidAmbiguous  default true — исключить `0 O 1 l I |` из ВСЕХ
-     *                   классов (без заглушек: классы просто без них).
+     *   avoidAmbiguous  default true — исключить неоднозначные символы:
+     *                   из lower уходят 0, 1, l; из upper — O, I; из
+     *                   digits — 0, 1 (символ `|` в классах не участвует).
      *
      * Равномерность: crypto.getRandomValues(Uint32Array) + rejection
      * sampling (отбрасываем значения >= floor(2^32/len)*len) — без
@@ -134,8 +135,10 @@
         var lengthInput = form.querySelector('[data-pw-length]');
         var symbolsInput = form.querySelector('[data-pw-symbols]');
         var avoidInput = form.querySelector('[data-pw-avoid-ambiguous]');
+        // Пустое поле «Длина» → дефолт 20 (Number('') = 0, кламп дал бы 12).
+        var rawLength = lengthInput ? lengthInput.value : '';
         return {
-            length: lengthInput ? Number(lengthInput.value) : PW_DEFAULT_LENGTH,
+            length: rawLength === '' ? PW_DEFAULT_LENGTH : Number(rawLength),
             includeSymbols: symbolsInput ? symbolsInput.checked : true,
             avoidAmbiguous: avoidInput ? avoidInput.checked : true
         };
@@ -172,8 +175,17 @@
                 if (!input) {
                     return;
                 }
+                var overwriting = input.value !== '' &&
+                    input.getAttribute('data-pw-generated') !== '1';
+                if (overwriting && !window.confirm(
+                        'Сгенерированный пароль перезапишет введённый. Продолжить?')) {
+                    return;
+                }
                 input.value = generatePassword(readGeneratorOptions(form));
                 input.type = 'text';
+                input.setAttribute('data-pw-generated', '1');
+                input.focus();
+                input.select();
                 syncVisibilityLabel(input);
             });
         });
@@ -193,16 +205,15 @@
     var TOAST_HIDE_DELAY_MS = 2500;
     var TOAST_FADE_MS = 300;
 
-    async function copyToClipboard(text) {
-        try {
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                await navigator.clipboard.writeText(text);
-                return true;
-            }
-        } catch (e) {
-            /* secure context отсутствует или доступ запрещен — fallback ниже */
+    /* ES5-стиль (Promise-цепочка, без async/await): старые движки должны
+       распарсить весь файл, иначе отвалятся и data-confirm-обработчики. */
+    function copyToClipboard(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            return navigator.clipboard.writeText(text).then(
+                function () { return true; },
+                function () { return copyViaExecCommand(text); });
         }
-        return copyViaExecCommand(text);
+        return Promise.resolve(copyViaExecCommand(text));
     }
 
     function copyViaExecCommand(text) {
@@ -228,6 +239,8 @@
         if (!container) {
             container = document.createElement('div');
             container.className = 'toast-container';
+            container.setAttribute('role', 'status');
+            container.setAttribute('aria-live', 'polite');
             document.body.appendChild(container);
         }
         var toast = document.createElement('div');

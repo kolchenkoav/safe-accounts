@@ -31,6 +31,8 @@
     --alert-info-text: #dbeafe;
     --alert-warning-bg: #78350f;
     --alert-warning-text: #fde68a;
+    --toast-bg: #111827;
+    --toast-fg: #f9fafb;
 }
 
 [data-theme="light"] {
@@ -55,6 +57,8 @@
     --alert-info-text: #1e3a8a;
     --alert-warning-bg: #fef3c7;
     --alert-warning-text: #92400e;
+    --toast-bg: #fff;
+    --toast-fg: #222;
 }
 
 body {

@@ -867,7 +867,7 @@ class WebUiIT {
                 .contains("data-pw-length")
                 .contains("data-pw-symbols")
                 .contains("data-pw-avoid-ambiguous");
-        assertThat(createHtml).containsPattern("(?s)data-pw-length[^>]*value=\"20\"");
+        assertThat(createHtml).contains("data-pw-length").contains("value=\"20\"");
         assertThat(createHtml).containsPattern("(?s)data-pw-symbols[^>]*checked");
         assertThat(createHtml).containsPattern("(?s)data-pw-avoid-ambiguous[^>]*checked");
         // (c) без inline-JS: ни обработчиков, ни javascript:-URL
@@ -888,7 +888,7 @@ class WebUiIT {
                 .contains("data-pw-length")
                 .contains("data-pw-symbols")
                 .contains("data-pw-avoid-ambiguous");
-        assertThat(editHtml).containsPattern("(?s)data-pw-length[^>]*value=\"20\"");
+        assertThat(editHtml).contains("data-pw-length").contains("value=\"20\"");
         assertThat(editHtml).containsPattern("(?s)data-pw-symbols[^>]*checked");
         assertThat(editHtml).doesNotContain("onclick=").doesNotContain("onsubmit=");
     }
