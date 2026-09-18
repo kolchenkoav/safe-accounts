@@ -165,6 +165,16 @@ public class ApiExceptionHandler {
                         "Concurrent modification — repeat the request"));
     }
 
+    /** Системный тег сканера: переименование запрещено — 409 (G2). */
+    @ExceptionHandler(com.example.safeaccounts.service.TagReservedNameException.class)
+    public ResponseEntity<ProblemDetail> handleTagReserved(
+            com.example.safeaccounts.service.TagReservedNameException e) {
+        HttpStatus status = HttpStatus.CONFLICT;
+        return ResponseEntity.status(status)
+                .body(ProblemDetail.forStatusAndDetail(status,
+                        "Tag name is reserved: " + e.getReservedName()));
+    }
+
     /** Тег всё ещё привязан хотя бы к одной записи — 409 Conflict (RFC 7807). */
     @ExceptionHandler(TagStillReferencedException.class)
     public ResponseEntity<ProblemDetail> handleTagReferenced(TagStillReferencedException e) {

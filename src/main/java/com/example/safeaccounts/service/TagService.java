@@ -143,6 +143,13 @@ public class TagService {
         String name = normalizeAndValidateName(rawName);
         String nameLower = name.toLowerCase(Locale.ROOT);
 
+        // G2: weak-password — системный тег сканера; переименование в него
+        // И из него запрещено (иначе diff следующего скана сломается).
+        if (nameLower.equals(VaultScanService.WEAK_PASSWORD_TAG_NAME)
+                || tag.getNameLower().equals(VaultScanService.WEAK_PASSWORD_TAG_NAME)) {
+            throw new TagReservedNameException(VaultScanService.WEAK_PASSWORD_TAG_NAME);
+        }
+
         if (!tag.getNameLower().equals(nameLower)) {
             tagRepository.findByUser_IdAndNameLower(actor.getId(), nameLower)
                     .filter(other -> !other.getId().equals(tag.getId()))

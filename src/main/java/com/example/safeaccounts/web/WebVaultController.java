@@ -122,12 +122,18 @@ model.addAttribute("entryForm", new EntryForm("", "", "", "", ""));
         return "entry-form";
     }
 
-    /** Создание записи: шифрование и аудит — в VaultService. */
+    /** Создание записи: шифрование и аудит — в VaultService. Пароль обязателен
+     *  (в отличие от edit — G1: там пусто = «не менять»). */
     @PostMapping("/web/entries")
     public String create(@AuthenticationPrincipal AuthUser principal,
                          @Valid @ModelAttribute("entryForm") EntryForm form,
                          BindingResult bindingResult,
                          RedirectAttributes redirectAttributes) {
+        // G1 сделал password опциональным в EntryForm (общая с edit форма):
+        // при создании пароль ОБЯЗАТЕЛЕН — проверяем явно.
+        if (form.password() == null || form.password().isBlank()) {
+            bindingResult.rejectValue("password", "NotBlank", "Пароль обязателен");
+        }
         if (bindingResult.hasErrors()) {
             // Повторный рендер формы с ошибками (th:errors), а не 500/400.
             return "entry-form";
@@ -350,6 +356,7 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
             return "redirect:/web/entries";
         }
         model.addAttribute("report", report);
+        model.addAttribute("own", true);
         return "scan-report";
     }
 

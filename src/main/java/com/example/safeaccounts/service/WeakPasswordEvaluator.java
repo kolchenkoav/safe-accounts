@@ -27,6 +27,9 @@ public class WeakPasswordEvaluator {
 
     private final Zxcvbn zxcvbn;
 
+    /** Выше этой длины zxcvbn не вызывается (DoS-гвард, см. evaluate). */
+    public static final int MAX_ZXCVBN_LENGTH = 200;
+
     public WeakPasswordEvaluator() {
         this(new Zxcvbn());
     }
@@ -49,7 +52,10 @@ public class WeakPasswordEvaluator {
             return reasons;
         }
         if (reuseCount >= 2) {
-            reasons.add("Пароль используется в " + reuseCount + " записях");
+            // Русская плюрализация: 1 запись (кроме 11), иначе — записями.
+            reasons.add("Пароль используется в " + reuseCount
+                    + (reuseCount % 10 == 1 && reuseCount % 100 != 11
+                            ? " записи" : " записях"));
         }
         if (password.length() < 12) {
             // без символа '<' — текст попадает в HTML-отчёт (th:text экранирует,
@@ -61,10 +67,16 @@ public class WeakPasswordEvaluator {
         } else if (password.matches("[a-z]+")) {
             reasons.add("Вырожденный набор символов");
         }
-        Strength strength = zxcvbn.measure(password);
-        int score = strength.getScore();
-        if (score <= cfg.weakScore()) {
-            reasons.add("Простой пароль (оценка стойкости " + score + " из 4)");
+        // zxcvbn-DoS гвард (fix CRITICAL): сложность measure() ~ O(n²) —
+        // 4096 симв ≈ 123 c, что делает скан DoS-able. Пароли длиннее 200
+        // символов по score не оцениваются: такой пароль заведомо не слабый
+        // по score; оценка по длине/charset/reuse остаётся.
+        if (password.length() <= MAX_ZXCVBN_LENGTH) {
+            Strength strength = zxcvbn.measure(password);
+            int score = strength.getScore();
+            if (score <= cfg.weakScore()) {
+                reasons.add("Простой пароль (оценка стойкости " + score + " из 4)");
+            }
         }
         return reasons;
     }

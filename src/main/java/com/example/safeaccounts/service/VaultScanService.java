@@ -16,6 +16,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -66,6 +67,7 @@ public class VaultScanService {
     private final ScanProperties scanProperties;
     private final AuditService auditService;
     private final RateLimiter rateLimiter;
+    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
     public VaultScanService(VaultEntryRepository vaultEntryRepository,
                             TagService tagService,
@@ -73,7 +75,8 @@ public class VaultScanService {
                             WeakPasswordEvaluator evaluator,
                             ScanProperties scanProperties,
                             AuditService auditService,
-                            RateLimiter rateLimiter) {
+                            RateLimiter rateLimiter,
+                            org.springframework.transaction.support.TransactionTemplate transactionTemplate) {
         this.vaultEntryRepository = vaultEntryRepository;
         this.tagService = tagService;
         this.cryptoService = cryptoService;
@@ -81,6 +84,7 @@ public class VaultScanService {
         this.scanProperties = scanProperties;
         this.auditService = auditService;
         this.rateLimiter = rateLimiter;
+        this.transactionTemplate = transactionTemplate;
     }
 
     /** Слабая запись в отчёте: расшифрованный name + причины (без пароля). */
@@ -96,15 +100,16 @@ public class VaultScanService {
      * @param weakEntries слабые записи (name расшифрован — только владельцу/админу)
      */
     public record ScanReport(int scanned, int weakCount, int tagged, int untagged,
-                             boolean truncated, List<WeakEntry> weakEntries) {
+                             int failed, boolean truncated,
+                             List<WeakEntry> weakEntries) {
     }
 
     /**
      * Скан сейфа {@code target} от лица {@code actor} (self или ADMIN).
-     * Транзакция одна на весь скан: сущности страниц остаются managed,
-     * пометки тегами применяются батчами перед коммитом.
+     * Чтение/расшифровка/оценка — ВНЕ транзакции (репозитории авто-коммит
+     * чтения); транзакция — только на фазу синхронизации тегов (fix MAJOR
+     * «одна TX»: расшифровка 10k записей не держит TX/коннект).
      */
-    @Transactional
     public ScanReport scan(User actor, User target) {
         // Квота скана ПОСЛЕ аутентификации (Bearer-запросы на фазе фильтра ещё
         // не аутентифицированы — SecurityContext пуст): ключ user:<target>;
@@ -133,25 +138,41 @@ public class VaultScanService {
         } while (taggedPage.hasNext());
 
         // Проход по страницам: расшифровка + reuse-детект (в памяти скана).
+        // ВНЕ транзакции: чтения авто-коммитны, ошибки конкретной записи —
+        // в счётчик failed, скан продолжается (TP MINOR).
         List<VaultEntry> scannedEntries = new ArrayList<>();
         List<String> decryptedPasswords = new ArrayList<>();
         Map<String, Integer> reuseCounts = new HashMap<>();
         boolean truncated = false;
         int scanned = 0;
+        int failed = 0;
         int pageIndex = 0;
         Page<VaultEntry> page;
         do {
-            page = vaultEntryRepository.findAllByUser_Id(target.getId(), PageRequest.of(pageIndex++, PAGE_SIZE));
+        // Пагинация с детерминированным Sort (createdAt, id) — TP: без него
+        // конкурентные изменения дают дубли/пропуски между страницами.
+            page = vaultEntryRepository.findAllByUser_Id(target.getId(),
+                    PageRequest.of(pageIndex++, PAGE_SIZE,
+                            org.springframework.data.domain.Sort.by(
+                                    org.springframework.data.domain.Sort.Order.asc("createdAt"),
+                                    org.springframework.data.domain.Sort.Order.asc("id"))));
             for (VaultEntry entry : page.getContent()) {
                 if (scanned >= MAX_SCAN_ENTRIES) {
                     truncated = true;
                     break;
                 }
-                String password = cryptoService.decrypt(entry.getPasswordEnc(), dek);
-                scannedEntries.add(entry);
-                decryptedPasswords.add(password);
-                reuseCounts.merge(sha256Hex(password), 1, Integer::sum);
-                scanned++;
+                try {
+                    String password = cryptoService.decrypt(entry.getPasswordEnc(), dek);
+                    scannedEntries.add(entry);
+                    decryptedPasswords.add(password);
+                    reuseCounts.merge(sha256Hex(password), 1, Integer::sum);
+                    scanned++;
+                } catch (RuntimeException e) {
+                    // Не логируем содержимое: только факт ошибки конкретной записи.
+                    failed++;
+                    log.warn("Vault scan: skip entry {} of target {}: decrypt failed",
+                            entry.getId(), target.getUsername());
+                }
             }
             if (truncated) {
                 break;
@@ -174,31 +195,53 @@ public class VaultScanService {
             }
         }
 
-        // Точный diff: ставим слабым, у исправившихся снимаем.
+        // Точный diff: ставим слабым, у исправившихся снимаем — в ТРАНЗАКЦИИ
+        // (TransactionTemplate; entities пере-загружаются managed, т.к. чтение
+        // шло вне TX). Пакетная обработка по 500 id.
         int tagged = 0;
         int untagged = 0;
         Set<UUID> scannedIds = new HashSet<>();
         for (VaultEntry entry : scannedEntries) {
             scannedIds.add(entry.getId());
-            if (weakIds.contains(entry.getId()) && !currentlyTagged.contains(entry.getId())) {
-                entry.getTags().add(weakTag);
-                tagged++;
-            }
         }
-        for (VaultEntry entry : vaultEntryRepository
-                .findAllByUser_IdAndTags_Id(target.getId(), weakTag.getId(), Pageable.unpaged())
-                .getContent()) {
-            if (scannedIds.contains(entry.getId()) && !weakIds.contains(entry.getId())) {
-                entry.getTags().remove(weakTag);
-                untagged++;
+        List<UUID> toAttach = scannedEntries.stream()
+                .filter(e -> weakIds.contains(e.getId())
+                        && !currentlyTagged.contains(e.getId()))
+                .map(VaultEntry::getId)
+                .toList();
+        List<UUID> toDetach = currentlyTagged.stream()
+                .filter(id -> scannedIds.contains(id) && !weakIds.contains(id))
+                .toList();
+        List<UUID> attachIds = new ArrayList<>(toAttach);
+        List<UUID> detachIds = new ArrayList<>(toDetach);
+        transactionTemplate.executeWithoutResult(status -> {
+            for (int from = 0; from < attachIds.size(); from += PAGE_SIZE) {
+                vaultEntryRepository.findAllById(
+                                attachIds.subList(from, Math.min(from + PAGE_SIZE, attachIds.size())))
+                        .forEach(e -> {
+                            if (target.getId().equals(e.getUser().getId())) {
+                                e.getTags().add(weakTag);
+                            }
+                        });
             }
-        }
+            for (int from = 0; from < detachIds.size(); from += PAGE_SIZE) {
+                vaultEntryRepository.findAllById(
+                                detachIds.subList(from, Math.min(from + PAGE_SIZE, detachIds.size())))
+                        .forEach(e -> {
+                            if (target.getId().equals(e.getUser().getId())) {
+                                e.getTags().remove(weakTag);
+                            }
+                        });
+            }
+        });
+        tagged = attachIds.size();
+        untagged = detachIds.size();
 
         long durationMs = (System.nanoTime() - startNanos) / 1_000_000L;
         log.info("Vault scanned: actor={}, target={}, scanned={}, weak={}, tagged={}, "
-                        + "untagged={}, truncated={}, durationMs={}",
+                        + "untagged={}, failed={}, truncated={}, durationMs={}",
                 actor.getUsername(), target.getUsername(), scanned, weakIds.size(),
-                tagged, untagged, truncated, durationMs);
+                tagged, untagged, failed, truncated, durationMs);
         auditService.record(actor, AuditService.VAULT_SCANNED, null, "User",
                 target.getId().toString(),
                 Map.of("actor", actor.getUsername(),
@@ -207,11 +250,12 @@ public class VaultScanService {
                         "weak", weakIds.size(),
                         "tagged", tagged,
                         "untagged", untagged,
+                        "failed", failed,
                         "truncated", truncated,
                         "durationMs", durationMs));
 
         return new ScanReport(scanned, weakIds.size(), tagged, untagged,
-                truncated, List.copyOf(weakEntries));
+                failed, truncated, List.copyOf(weakEntries));
     }
 
     private static String sha256Hex(String value) {

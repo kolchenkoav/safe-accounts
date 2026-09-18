@@ -31,6 +31,7 @@ import com.example.safeaccounts.security.RateLimiter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -342,6 +343,60 @@ private UUID createEntry(String token, String name, String site, String login,
         mockMvc.perform(post("/api/admin/users/" + targetUserId + "/vault/scan")
                         .header("Authorization", "Bearer " + targetToken))
                 .andExpect(status().isForbidden());
+    }
+
+    /** G2: переименование системного тега — 409; чужое имя в него — тоже 409. */
+    @Test
+    void renameReservedWeakPasswordTagIsRejected() throws Exception {
+        String token = registerAndLogin("scan-reserved");
+        UUID weakId = createEntry(token, "With-Weak-Tag", "https://example.com", "alice", "123456", null);
+
+        mockMvc.perform(post("/api/vault/scan").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        // id тега weak-password — из тегов записи
+        MvcResult tags = mockMvc.perform(get("/api/vault/" + weakId + "/tags")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn();
+        UUID weakTagId = UUID.fromString(objectMapper.readTree(
+                tags.getResponse().getContentAsString()).get(0).get("id").asText());
+
+        // (а) rename weak-password → 409
+        mockMvc.perform(patch("/api/tags/" + weakTagId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"New-Name\"}"))
+                .andExpect(status().isConflict());
+
+        // (б) rename другого тега В weak-password → 409
+        MvcResult other = mockMvc.perform(post("/api/tags")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Regular-Tag\"}"))
+                .andExpect(status().isCreated())
+                .andReturn();
+        UUID otherId = UUID.fromString(objectMapper.readTree(
+                other.getResponse().getContentAsString()).get("id").asText());
+        mockMvc.perform(patch("/api/tags/" + otherId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"weak-password\"}"))
+                .andExpect(status().isConflict());
+    }
+
+    /** G2: скан записи с очень длинным паролем завершается без DoS (weak=false). */
+    @Test
+    void scanHandlesVeryLongPasswordWithoutDoS() throws Exception {
+        String token = registerAndLogin("scan-longpass");
+        String longPassword = "Zk9#mQ2$vL8!wR4&xJ6%".repeat(204); // 4080 симв.
+        createEntry(token, "Long-Pass", "https://example.com", "alice", longPassword, null);
+
+        mockMvc.perform(post("/api/vault/scan").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scanned").value(1))
+                .andExpect(jsonPath("$.weakCount").value(0))
+                .andExpect(jsonPath("$.weakEntries.length()").value(0));
     }
 
     @Test

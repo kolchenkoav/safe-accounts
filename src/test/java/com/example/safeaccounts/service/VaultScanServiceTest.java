@@ -87,14 +87,26 @@ class VaultScanServiceTest {
         weakTagged = entry("e3", "password");
         weakTagged.getTags().add(weakTag);
 
+        org.springframework.transaction.PlatformTransactionManager txManager =
+                mock(org.springframework.transaction.PlatformTransactionManager.class);
         service = new VaultScanService(vaultEntryRepository, tagService, cryptoService,
-                new WeakPasswordEvaluator(), scanProperties, auditService, rateLimiter);
+                new WeakPasswordEvaluator(), scanProperties, auditService, rateLimiter,
+                new org.springframework.transaction.support.TransactionTemplate(txManager));
 
         when(tagService.findOrCreateByName(target, VaultScanService.WEAK_PASSWORD_TAG_NAME))
                 .thenReturn(weakTag);
         when(rateLimiter.tryAcquireWithRetryAfter(anyString(), any()))
                 .thenReturn(RateLimiter.Decision.ALLOWED);
         when(cryptoService.unwrapDek(any(WrappedDek.class))).thenReturn(mock(SecretKey.class));
+        when(vaultEntryRepository.findAllById(any())).thenAnswer(inv -> {
+            java.util.List<UUID> ids = new java.util.ArrayList<>();
+            for (Object id : (Iterable<?>) inv.getArgument(0)) {
+                ids.add((UUID) id);
+            }
+            return java.util.List.of(weakUntagged, strongTagged, weakTagged).stream()
+                    .filter(e -> ids.contains(e.getId()))
+                    .toList();
+        });
         when(cryptoService.decrypt(anyString(), any())).thenAnswer(inv -> {
             String cipher = inv.getArgument(0);
             if (cipher.startsWith("enc-pass-e1")) return WEAK_PASSWORD;
@@ -125,8 +137,8 @@ class VaultScanServiceTest {
 
     private VaultEntry entry(String index, String password) {
         return new VaultEntry(UUID.randomUUID(), target,
-                "enc-name-" + index, "enc-site-" + index, "enc-login-" + index, "enc-pass-" + index,
-                null, NOW, null, null);
+                "enc-name-" + index, "enc-site-" + index, "enc-login-" + index,
+                "enc-pass-" + index, null, NOW, null, null);
     }
 
     @Test
@@ -137,6 +149,7 @@ class VaultScanServiceTest {
         assertThat(report.weakCount()).isEqualTo(2);
         assertThat(report.tagged()).isEqualTo(1);
         assertThat(report.untagged()).isEqualTo(1);
+        assertThat(report.failed()).isZero();
         assertThat(report.truncated()).isFalse();
 
         assertThat(weakUntagged.getTags()).containsExactly(weakTag);

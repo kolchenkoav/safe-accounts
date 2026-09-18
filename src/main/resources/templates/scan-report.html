@@ -40,6 +40,10 @@
             <span class="num" data-metric="untagged" th:text="${report.untagged}">0</span>
             <span class="caption">снято</span>
         </div>
+        <div class="report-card" th:if="${report.failed > 0}">
+            <span class="num" data-metric="failed" th:text="${report.failed}">0</span>
+            <span class="caption">ошибок чтения</span>
+        </div>
     </div>
 
     <p th:if="${report.weakEntries.isEmpty()}" class="muted">
@@ -56,11 +60,19 @@
             </tr>
         </thead>
         <tbody>
-            <tr th:each="weak : ${report.weakEntries}">
+            <!-- Рендерим первые 100; если больше — строка «и ещё X записей…»
+                 (fix MINOR: weakEntries без лимита рендера на больших сейфах).
+                 user-скан: имя — ссылка на карточку (свою); admin-скан —
+                 простой текст: карточка чужая → 404. -->
+            <tr th:each="weak, stat : ${report.weakEntries}" th:if="${stat.index < 100}">
                 <td>
-                    <a th:href="@{/web/entries/{id}(id=${weak.id})}"
-                        th:text="${weak.name}">name</a
+                    <a
+                        th:if="${own}"
+                        th:href="@{/web/entries/{id}(id=${weak.id})}"
+                        th:text="${weak.name}"
+                        >name</a
                     >
+                    <span th:if="${!own}" th:text="${weak.name}">name</span>
                 </td>
                 <td>
                     <ul class="reasons">
@@ -68,6 +80,13 @@
                             reason
                         </li>
                     </ul>
+                </td>
+            </tr>
+            <tr th:if="${report.weakEntries.size() > 100}">
+                <td colspan="2" class="muted">
+                    и ещё <span
+                        th:text="${report.weakEntries.size() - 100}"
+                    >X</span> записей…
                 </td>
             </tr>
         </tbody>

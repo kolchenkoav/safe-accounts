@@ -281,6 +281,7 @@ public class WebAdminController {
         model.addAttribute("report", report);
         model.addAttribute("targetUsername", target.getUsername());
         model.addAttribute("backToUsers", true);
+        model.addAttribute("own", false);
         return "scan-report";
     }
 

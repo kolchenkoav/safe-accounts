@@ -100,6 +100,11 @@ public class WebTagController {
             redirectAttributes.addFlashAttribute("flashMessage", "Тег переименован");
         } catch (TagAlreadyExistsException e) {
             redirectAttributes.addFlashAttribute("flashError", "Тег уже существует");
+        } catch (com.example.safeaccounts.service.TagReservedNameException e) {
+            // Системный тег сканера переименовывать нельзя (G2)
+            redirectAttributes.addFlashAttribute("flashError",
+                    "Системный тег \"" + e.getReservedName()
+                            + "\" переименовывать нельзя");
         } catch (IllegalArgumentException e) {
             redirectAttributes.addFlashAttribute("flashError", "Некорректное имя тега");
         } catch (VaultException e) {

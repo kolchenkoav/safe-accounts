@@ -1158,6 +1158,66 @@ class WebUiIT {
                         org.hamcrest.Matchers.containsString("К списку пользователей"))));
     }
 
+    // -- 14. G1/G2: web-create с пустым паролем и сканер -------------------------
+
+    /** G1 web: create с пустым паролем — re-render формы, запись НЕ создана. */
+    @Test
+    void createWithBlankPasswordRendersFormAndDoesNotCreate() throws Exception {
+        registerUser("blank-create");
+        MockHttpSessionHolder holder = login("blank-create");
+
+        mockMvc.perform(post("/web/entries")
+                        .session(holder.session())
+                        .with(csrf())
+                        .param("name", "Без пароля")
+                        .param("site", "https://example.com")
+                        .param("login", "alice")
+                        .param("password", "")
+                        .param("notes", ""))
+                .andExpect(status().isOk())
+                .andExpect(view().name("entry-form"))
+                .andExpect(content().string(org.hamcrest.Matchers
+                        .containsString("Пароль обязателен")));
+
+        mockMvc.perform(get("/web/entries").session(holder.session()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Записей пока нет")));
+    }
+
+    /** G2: админ-отчёт — имя слабой записи БЕЗ ссылки (карточка чужая). */
+    @Test
+    void adminScanReportHasNoLinksToForeignEntries() throws Exception {
+        registerUser("scan-admin2");
+        transactionTemplate.executeWithoutResult(status -> userRepository
+                .findByUsername("scan-admin2").orElseThrow()
+                .changeRole("ROLE_ADMIN", java.time.Instant.now()));
+        MockHttpSessionHolder adminHolder = login("scan-admin2");
+
+        registerUser("scan-target2");
+        MockHttpSessionHolder targetHolder = login("scan-target2");
+        createEntry(targetHolder, "Слабая у target", "https://example.com", "alice", "123456");
+        UUID targetId = userRepository.findByUsername("scan-target2").orElseThrow().getId();
+
+        mockMvc.perform(post("/web/admin/users/" + targetId + "/vault/scan")
+                        .session(adminHolder.session())
+                        .with(csrf()))
+                .andExpect(status().is3xxRedirection());
+
+        MvcResult report = mockMvc.perform(get("/web/admin/users/" + targetId
+                        + "/vault/scan/report").session(adminHolder.session()))
+                .andExpect(status().isOk())
+                .andExpect(view().name("scan-report"))
+                .andExpect(content().string(org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString("Слабая у target"),
+                        org.hamcrest.Matchers.containsString("Пользователь:"),
+                        org.hamcrest.Matchers.containsString("scan-target2"))))
+                .andReturn();
+        // Имя без ссылки: href на чужую карточку отсутствует
+        assertThat(htmlOf(report)).doesNotContain(
+                "href=\"/web/entries/" + firstEntryId(targetHolder));
+    }
+
     private static String htmlOf(MvcResult result)
             throws java.io.UnsupportedEncodingException {
         return result.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
