@@ -52,7 +52,9 @@ public class WeakPasswordEvaluator {
             reasons.add("Пароль используется в " + reuseCount + " записях");
         }
         if (password.length() < 12) {
-            reasons.add("Слишком короткий (< 12)");
+            // без символа '<' — текст попадает в HTML-отчёт (th:text экранирует,
+            // но «< 12» в сообщении затрудняет строковые ассерты)
+            reasons.add("Слишком короткий (меньше 12 символов)");
         }
         if (password.matches("\\d+")) {
             reasons.add("Вырожденный набор символов");

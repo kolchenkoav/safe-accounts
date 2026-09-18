@@ -37,7 +37,7 @@ class WeakPasswordEvaluatorTest {
     void trivialDigitsPasswordIsWeakForManyReasons() {
         List<String> reasons = real.evaluate("123456", 0, cfg(1));
         assertThat(reasons).anyMatch(r -> r.contains("оценка стойкости 0 из 4"))
-                .anyMatch(r -> r.contains("Слишком короткий (< 12)"))
+                .anyMatch(r -> r.contains("Слишком короткий"))
                 .anyMatch(r -> r.contains("Вырожденный набор символов"));
     }
 
@@ -56,7 +56,7 @@ class WeakPasswordEvaluatorTest {
     @Test
     void elevenCharactersIsTooShort() {
         List<String> reasons = real.evaluate("Abcdefghi12", 0, cfg(4));
-        assertThat(reasons).anyMatch(r -> r.contains("Слишком короткий (< 12)"));
+        assertThat(reasons).anyMatch(r -> r.contains("Слишком короткий"));
     }
 
     @Test
