@@ -6,7 +6,10 @@ import com.example.safeaccounts.service.AdminService;
 import com.example.safeaccounts.service.AdminServiceException;
 import com.example.safeaccounts.service.AuthServiceException;
 import com.example.safeaccounts.service.KeyRotationException;
+import com.example.safeaccounts.service.ScanProperties;
+import com.example.safeaccounts.service.ScanRateLimitedException;
 import com.example.safeaccounts.service.VaultExportImportService;
+import com.example.safeaccounts.service.VaultScanService;
 import com.example.safeaccounts.service.csv.ConflictStrategy;
 import com.example.safeaccounts.service.csv.CsvFilenames;
 import com.example.safeaccounts.service.csv.ExportPayload;
@@ -55,11 +58,17 @@ public class WebAdminController {
 
     private final AdminService adminService;
     private final VaultExportImportService exportImportService;
+    private final VaultScanService scanService;
+    private final ScanProperties scanProperties;
 
     public WebAdminController(AdminService adminService,
-                              VaultExportImportService exportImportService) {
+                              VaultExportImportService exportImportService,
+                              VaultScanService scanService,
+                              ScanProperties scanProperties) {
         this.adminService = adminService;
         this.exportImportService = exportImportService;
+        this.scanService = scanService;
+        this.scanProperties = scanProperties;
     }
 
     // -- пользователи ----------------------------------------------------------
@@ -222,6 +231,57 @@ public class WebAdminController {
         headers.setCacheControl("no-store");
         return new org.springframework.http.ResponseEntity<>(payload.csv(), headers,
                 org.springframework.http.HttpStatus.OK);
+    }
+
+    /**
+     * Сканер слабых паролей в чужом сейфе (G2, план §3.4): PRG — отчёт во
+     * flash, ответ 302 на GET .../scan/report. Аудит VAULT_SCANNED
+     * (actor=admin, target) пишет сервис. Отключённый target разрешён
+     * (B4, как export/import). Причины слабости в отчёте — без паролей.
+     */
+    @PostMapping("/web/admin/users/{id}/vault/scan")
+    public String scanUserVault(@AuthenticationPrincipal AuthUser principal,
+                                @PathVariable UUID id,
+                                RedirectAttributes redirectAttributes) {
+        User target;
+        try {
+            target = adminService.requireUserById(id);
+        } catch (AuthServiceException e) {
+            redirectAttributes.addFlashAttribute("flashError", "Пользователь не найден");
+            return "redirect:/web/admin/users";
+        }
+        try {
+            redirectAttributes.addFlashAttribute("scanReport",
+                    scanService.scan(principal.user(), target));
+            return "redirect:/web/admin/users/" + id + "/vault/scan/report";
+        } catch (ScanRateLimitedException e) {
+            redirectAttributes.addFlashAttribute("flashError",
+                    "Скан уже выполнялся недавно — повторите через "
+                            + e.getRetryAfterSeconds() + " сек");
+            return "redirect:/web/admin/users";
+        }
+    }
+
+    /** Отчёт админского скана из flash (PRG); без flash — к списку. */
+    @GetMapping("/web/admin/users/{id}/vault/scan/report")
+    public String scanReport(@PathVariable UUID id,
+                             Model model,
+                             RedirectAttributes redirectAttributes) {
+        VaultScanService.ScanReport report =
+                (VaultScanService.ScanReport) model.asMap().get("scanReport");
+        if (report == null) {
+            return "redirect:/web/admin/users";
+        }
+        User target;
+        try {
+            target = adminService.requireUserById(id);
+        } catch (AuthServiceException e) {
+            return "redirect:/web/admin/users";
+        }
+        model.addAttribute("report", report);
+        model.addAttribute("targetUsername", target.getUsername());
+        model.addAttribute("backToUsers", true);
+        return "scan-report";
     }
 
     /** Страница импорта CSV в чужой сейф (переиспользуется import.html). */

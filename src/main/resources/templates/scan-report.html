@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru" data-theme="dark">
+<!-- Каркас <head> (включая theme.js/main.js) — общий фрагмент -->
+<head th:replace="~{fragments :: pageHead('Отчёт: проверка паролей — safe-accounts')}"></head>
+<body>
+<nav>
+    <a th:href="@{/web/entries}">&larr; К записям</a>
+    <!-- Тема: тёмная/светлая, выбор в localStorage (тёмная по умолчанию) -->
+    <button type="button" th:replace="~{fragments :: themeToggle}"></button>
+</nav>
+
+<main class="card">
+    <h1>Отчёт: проверка паролей</h1>
+
+    <!-- Для админского скана: чей сейф проверялся -->
+    <div class="alert alert-info" th:if="${targetUsername}">
+        Пользователь: <strong th:text="${targetUsername}">username</strong>
+    </div>
+
+    <!-- G2: превышен лимит записей (MAX_SCAN_ENTRIES = 10 000) -->
+    <span class="tag-badge dry-run-badge" th:if="${report.truncated}"
+        >неполный скан (лимит 10000)</span
+    >
+
+    <!-- Сводка (карточки-агрегаты); data-metric — для тестов -->
+    <div class="report-cards">
+        <div class="report-card">
+            <span class="num" data-metric="scanned" th:text="${report.scanned}">0</span>
+            <span class="caption">проверено</span>
+        </div>
+        <div class="report-card">
+            <span class="num" data-metric="weak" th:text="${report.weakCount}">0</span>
+            <span class="caption">слабых</span>
+        </div>
+        <div class="report-card">
+            <span class="num" data-metric="tagged" th:text="${report.tagged}">0</span>
+            <span class="caption">помечено</span>
+        </div>
+        <div class="report-card">
+            <span class="num" data-metric="untagged" th:text="${report.untagged}">0</span>
+            <span class="caption">снято</span>
+        </div>
+    </div>
+
+    <p th:if="${report.weakEntries.isEmpty()}" class="muted">
+        Слабых паролей не найдено.
+    </p>
+
+    <!-- Слабые записи: Название (ссылка на карточку) + причины.
+         Причины — человекочитаемые строки БЕЗ пароля (th:text экранирует). -->
+    <table th:if="${!report.weakEntries.isEmpty()}">
+        <thead>
+            <tr>
+                <th>Название</th>
+                <th>Причины</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr th:each="weak : ${report.weakEntries}">
+                <td>
+                    <a th:href="@{/web/entries/{id}(id=${weak.id})}"
+                        th:text="${weak.name}">name</a
+                    >
+                </td>
+                <td>
+                    <ul class="reasons">
+                        <li th:each="reason : ${weak.reasons}" th:text="${reason}">
+                            reason
+                        </li>
+                    </ul>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+
+    <!-- Тег «weak-password» учитывается существующим фильтром ?tag= -->
+    <p class="muted" th:if="${report.weakCount > 0}">
+        Слабые записи помечены тегом «Слабый пароль» — фильтруйте список по тегу.
+    </p>
+
+    <!-- Ссылки параметризованы: user → /web/entries, admin → /web/admin/users -->
+    <div class="actions">
+        <a class="button" th:href="@{/web/entries}">К записям</a>
+        <a
+            class="button"
+            th:if="${backToUsers}"
+            th:href="@{/web/admin/users}"
+            >К списку пользователей</a
+        >
+    </div>
+</main>
+</body>
+</html>

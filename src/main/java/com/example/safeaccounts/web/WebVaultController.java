@@ -3,7 +3,10 @@ package com.example.safeaccounts.web;
 import com.example.safeaccounts.security.AuthUser;
 import com.example.safeaccounts.service.TagService;
 import com.example.safeaccounts.service.VaultException;
+import com.example.safeaccounts.service.ScanProperties;
+import com.example.safeaccounts.service.ScanRateLimitedException;
 import com.example.safeaccounts.service.VaultExportImportService;
+import com.example.safeaccounts.service.VaultScanService;
 import com.example.safeaccounts.service.VaultService;
 import com.example.safeaccounts.service.csv.ConflictStrategy;
 import com.example.safeaccounts.service.csv.CsvFilenames;
@@ -49,12 +52,15 @@ public class WebVaultController {
     private final VaultService vaultService;
     private final TagService tagService;
     private final VaultExportImportService exportImportService;
+    private final VaultScanService vaultScanService;
 
     public WebVaultController(VaultService vaultService, TagService tagService,
-                              VaultExportImportService exportImportService) {
+                              VaultExportImportService exportImportService,
+                              VaultScanService vaultScanService) {
         this.vaultService = vaultService;
         this.tagService = tagService;
         this.exportImportService = exportImportService;
+        this.vaultScanService = vaultScanService;
     }
 
     /** Форма и данные страницы списка (без паролей — Task-11/Task-05). */
@@ -311,6 +317,40 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
         headers.setCacheControl("no-store");
         return new org.springframework.http.ResponseEntity<>(payload.csv(), headers,
                 org.springframework.http.HttpStatus.OK);
+    }
+
+    /**
+     * Сканер слабых паролей собственного сейфа (G2, план §3.4): PRG — отчёт во
+     * flash, ответ — 302 на GET /web/entries/scan/report. Аудит VAULT_SCANNED
+     * пишет сервис (только агрегаты); причины слабости в отчёте — без паролей.
+     * Квота 1/60 c на пользователя — в сервисе (после аутентификации):
+     * ScanRateLimitedException → flash с Retry-After + redirect (не 500).
+     */
+    @PostMapping("/web/entries/scan")
+    public String scan(@AuthenticationPrincipal AuthUser principal,
+                       RedirectAttributes redirectAttributes) {
+        try {
+            redirectAttributes.addFlashAttribute("scanReport",
+                    vaultScanService.scan(principal.user(), principal.user()));
+            return "redirect:/web/entries/scan/report";
+        } catch (ScanRateLimitedException e) {
+            redirectAttributes.addFlashAttribute("flashError",
+                    "Скан уже выполнялся недавно — повторите через "
+                            + e.getRetryAfterSeconds() + " сек");
+            return "redirect:/web/entries";
+        }
+    }
+
+    /** Отчёт скана из flash (PRG); прямой GET без flash — к списку записей. */
+    @GetMapping("/web/entries/scan/report")
+    public String scanReport(Model model) {
+        VaultScanService.ScanReport report =
+                (VaultScanService.ScanReport) model.asMap().get("scanReport");
+        if (report == null) {
+            return "redirect:/web/entries";
+        }
+        model.addAttribute("report", report);
+        return "scan-report";
     }
 
     /** Страница импорта CSV: предупреждение о plaintext + multipart-форма. */

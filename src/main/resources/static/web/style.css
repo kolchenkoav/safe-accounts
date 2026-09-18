@@ -605,6 +605,13 @@ td {
     opacity: 0;
 }
 
+/* G2 (Фаза 3): список причин слабости внутри таблицы отчёта. */
+.reasons {
+    margin: 0;
+    padding-left: 1.1rem;
+    font-size: 0.85rem;
+}
+
 @media (max-width: 600px) {
     .toast-container {
         width: calc(100% - 2rem);

@@ -75,6 +75,8 @@ class WebUiIT {
     TransactionTemplate transactionTemplate;
     @Autowired
     UserService userService;
+    @Autowired
+    com.example.safeaccounts.security.RateLimiter rateLimiter;
 
     private static final String PASSWORD = "Str0ng-Passw0rd!";
     private static final String ENTRY_PASSWORD = "Entry-Pass-123!";
@@ -1018,6 +1020,142 @@ class WebUiIT {
                 .andExpect(status().isOk())
                 .andExpect(content().string(
                         org.hamcrest.Matchers.containsString("G1-New-Pass-456!")));
+    }
+
+    // -- 13. G2 web-UI: сканер слабых паролей (PRG-отчёт) ------------------------
+
+    /** Скан с слабым паролем: отчёт + тег weak-password на записи. */
+    @Test
+    void scanProducesReportWithTagForWeakEntry() throws Exception {
+        registerUser("webscan-weak");
+        MockHttpSessionHolder holder = login("webscan-weak");
+        createEntry(holder, "Слабая запись", "https://example.com", "alice", "123456");
+        String entryId = firstEntryId(holder);
+
+        mockMvc.perform(post("/web/entries/scan")
+                        .session(holder.session())
+                        .with(csrf()))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/entries/scan/report"));
+
+        mockMvc.perform(get("/web/entries/scan/report").session(holder.session()))
+                .andExpect(status().isOk())
+                .andExpect(view().name("scan-report"))
+                .andExpect(content().string(org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString("Отчёт: проверка паролей"),
+                        org.hamcrest.Matchers.containsString("Слабая запись"),
+                        org.hamcrest.Matchers.containsString("Слишком короткий (меньше 12 символов)"))));
+
+        // Тег weak-password появился на записи (чип + фильтр по тегу)
+        mockMvc.perform(get("/web/entries").session(holder.session()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers
+                        .containsString("weak-password")));
+    }
+
+    /** Повторный скан после смены пароля на сильный — тег снят (untagged). */
+    @Test
+    void rescanAfterFixingPasswordRemovesWeakTag() throws Exception {
+        registerUser("webscan-fix");
+        MockHttpSessionHolder holder = login("webscan-fix");
+        createEntry(holder, "Исправляемая", "https://example.com", "alice", "123456");
+        String entryId = firstEntryId(holder);
+
+        mockMvc.perform(post("/web/entries/scan").session(holder.session()).with(csrf()))
+                .andExpect(status().is3xxRedirection());
+        mockMvc.perform(get("/web/entries/scan/report").session(holder.session()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("weak-password")));
+
+        // Сброс лимитера: квота 1/60 c потрачена первым сканом (429 — отдельный тест)
+        rateLimiter.reset();
+        mockMvc.perform(post("/web/entries/" + entryId + "/edit")
+                        .session(holder.session())
+                        .with(csrf())
+                        .param("name", "Исправляемая")
+                        .param("site", "https://example.com")
+                        .param("login", "alice")
+                        .param("password", "Zk9#mQ2$vL8!wR4&xJ6%")
+                        .param("notes", ""))
+                .andExpect(status().is3xxRedirection());
+
+        mockMvc.perform(post("/web/entries/scan").session(holder.session()).with(csrf()))
+                .andExpect(status().is3xxRedirection());
+        mockMvc.perform(get("/web/entries/scan/report").session(holder.session()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString("untagged"),
+                        org.hamcrest.Matchers.containsString("Слабых паролей не найдено"))));
+
+        mockMvc.perform(get("/web/entries").session(holder.session()))
+                .andExpect(status().isOk())
+                // scope: тег-опция select рендерится как «weak-password (0)» —
+                // чип записи рендерится как «>weak-password<»
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString(">weak-password<"))));
+    }
+
+    /** Квота: второй POST подряд → flash «повторите через N сек» + redirect. */
+
+    /** Квота: второй POST подряд → flash «повторите через N сек» + redirect. */
+    @Test
+    void secondScanInWindowShowsFlashAndRedirects() throws Exception {
+        registerUser("webscan-quota");
+        MockHttpSessionHolder holder = login("webscan-quota");
+        createEntry(holder, "Любая запись", "https://example.com", "alice", ENTRY_PASSWORD);
+
+        mockMvc.perform(post("/web/entries/scan").session(holder.session()).with(csrf()))
+                .andExpect(status().is3xxRedirection());
+
+        MvcResult second = mockMvc.perform(post("/web/entries/scan").session(holder.session()).with(csrf()))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/entries"))
+                // Flash проверяем на самом redirect-ответе: квота скана сработала
+                .andExpect(flash().attributeExists("flashError"))
+                .andExpect(flash().attribute("flashError",
+                        org.hamcrest.Matchers.containsString("повторите через")))
+                .andReturn();
+        assertThat(second.getRequest().getSession(false)).isNotNull();
+    }
+
+    /** Админ-скан чужого сейфа: баннер target; не-админ — 403. */
+    @Test
+    void adminScanShowsTargetBannerNonAdminForbidden() throws Exception {
+        registerUser("webscan-target");
+        MockHttpSessionHolder targetHolder = login("webscan-target");
+        createEntry(targetHolder, "Слабая у target", "https://example.com", "alice", "123456");
+        UUID targetId = userRepository.findByUsername("webscan-target").orElseThrow().getId();
+
+        // не-админ на админ-скан — 403
+        mockMvc.perform(post("/web/admin/users/" + targetId + "/vault/scan")
+                        .session(targetHolder.session())
+                        .with(csrf()))
+                .andExpect(status().isForbidden());
+
+        // admin: регистрация через API, роль — напрямую в репозитории
+        // (web change-role требует уже имеющегося ROLE_ADMIN), затем логин:
+        // роль попадает в сессию при выпуске
+        registerUser("webscan-admin");
+        transactionTemplate.executeWithoutResult(status -> userRepository
+                .findByUsername("webscan-admin").orElseThrow()
+                .changeRole("ROLE_ADMIN", java.time.Instant.now()));
+        MockHttpSessionHolder adminHolder = login("webscan-admin");
+
+        mockMvc.perform(post("/web/admin/users/" + targetId + "/vault/scan")
+                        .session(adminHolder.session())
+                        .with(csrf()))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/admin/users/" + targetId + "/vault/scan/report"));
+
+        mockMvc.perform(get("/web/admin/users/" + targetId + "/vault/scan/report")
+                        .session(adminHolder.session()))
+                .andExpect(status().isOk())
+                .andExpect(view().name("scan-report"))
+                .andExpect(content().string(org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString("Пользователь:"),
+                        org.hamcrest.Matchers.containsString("webscan-target"),
+                        org.hamcrest.Matchers.containsString("К списку пользователей"))));
     }
 
     private static String htmlOf(MvcResult result)

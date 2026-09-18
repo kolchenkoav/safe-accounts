@@ -141,6 +141,15 @@
                                 th:href="@{/web/admin/users/{id}/vault/import(id=${u.id})}"
                                 >Импорт CSV</a
                             >
+                            <!-- G2 (Фаза 3): сканер слабых паролей в сейфе пользователя -->
+                            <form
+                                class="inline"
+                                th:action="@{/web/admin/users/{id}/vault/scan(id=${u.id})}"
+                                method="post"
+                                data-confirm="Скан расшифрует все записи пользователя и может занять время. Запустить?"
+                            >
+                                <button type="submit" class="small">Проверить пароли</button>
+                            </form>
                         </td>
                     </tr>
                 </tbody>
