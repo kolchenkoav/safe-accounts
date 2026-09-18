@@ -57,12 +57,12 @@ public class WebVaultController {
         this.exportImportService = exportImportService;
     }
 
-/** Форма и данные страницы списка (без паролей — Task-11/Task-05). */
+    /** Форма и данные страницы списка (без паролей — Task-11/Task-05). */
     public record EntryForm(
             @NotBlank @Size(max = 256) String name,
             @NotBlank @Size(max = 2048) String site,
             @NotBlank @Size(max = 2048) String login,
-            @NotBlank @Size(max = 4096) String password,
+            @Size(max = 4096) String password,
             @Size(max = 8192) String notes) {
     }
 
@@ -191,7 +191,8 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
         return "entry-form-edit";
     }
 
-    /** Обновление записи: все поля перешифровываются новыми IV (VaultService). */
+    /** Обновление записи: поля перешифровываются новыми IV; пустой пароль =
+     *  «не менять» (G1 — VaultService сохраняет прежний шифротекст). */
     @PostMapping("/web/entries/{id}/edit")
     public String update(@AuthenticationPrincipal AuthUser principal,
                          @PathVariable UUID id,

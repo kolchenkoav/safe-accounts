@@ -185,9 +185,13 @@ public class VaultService {
     }
 
     /**
-     * Обновляет запись владельца: все поля перешифровываются заново (новые IV).
+     * Обновляет запись владельца: поля перешифровываются заново (новые IV),
+     * КРОМЕ случая, когда password пуст/NULL — тогда пароль сохраняется
+     * прежним (старый шифротекст и IV, перешифровки нет; G1).
      * Оптимистичная блокировка — через {@code @Version} JPA.
      *
+     * @param password непустой — новый пароль (перешифровка); null/blank —
+     *                 оставить прежний
      * @throws VaultException NOT_FOUND, если записи нет или она чужая
      */
     @Transactional
@@ -199,11 +203,16 @@ public class VaultService {
         Instant now = clock.instant();
 
         String notesEnc = notes == null ? null : cryptoService.encrypt(notes, dek);
+        // G1: пустой/NULL пароль = «не менять»: шифротекст и IV остаются прежние,
+        // перешифровка не выполняется; непустой — новый IV, как раньше.
+        String passwordEnc = (password == null || password.isBlank())
+                ? entry.getPasswordEnc()
+                : cryptoService.encrypt(password, dek);
         entry.updateEncrypted(
                 cryptoService.encrypt(name, dek),
                 cryptoService.encrypt(site, dek),
                 cryptoService.encrypt(login, dek),
-                cryptoService.encrypt(password, dek),
+                passwordEnc,
                 notesEnc,
                 now);
         VaultEntry saved = vaultEntryRepository.saveAndFlush(entry);

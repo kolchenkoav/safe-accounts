@@ -162,7 +162,56 @@ private UUID createEntry(String token, String name, String site, String login,
                 .andExpect(status().isNotFound());
     }
 
-@Test
+    /** G1: update БЕЗ password (null/пустая строка) — старый пароль остаётся. */
+    @Test
+    void updateWithoutPasswordKeepsExistingPassword() throws Exception {
+        String token = registerAndLogin("vault-g1null");
+        UUID id = createEntry(token, "Gmail", "https://example.com", "alice", ENTRY_PASSWORD, "note");
+
+        // null вместо пароля: другие поля обновляются, пароль — нет
+        mockMvc.perform(put("/api/vault/" + id)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new VaultEntryUpdateRequest(
+                                        "Gmail-2", "https://n.example.com", "bob", null, null))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Gmail-2"));
+
+        mockMvc.perform(get("/api/vault/" + id + "?reveal=true")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.password").value(ENTRY_PASSWORD));
+
+        // пустая строка — тоже «не менять»
+        mockMvc.perform(put("/api/vault/" + id)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new VaultEntryUpdateRequest(
+                                        "Gmail-3", "https://n.example.com", "bob", "", null))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/vault/" + id + "?reveal=true")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.password").value(ENTRY_PASSWORD));
+    }
+
+    /** G1: create без password — 400 (при создании пароль обязателен). */
+    @Test
+    void createWithoutPasswordIsRejected() throws Exception {
+        String token = registerAndLogin("vault-g1create");
+        mockMvc.perform(post("/api/vault")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new VaultEntryCreateRequest(
+                                        "Gmail", "https://example.com", "alice", null, null))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void listDoesNotContainPasswordsOrNotes() throws Exception {
         String token = registerAndLogin("vault-list");
         createEntry(token, "Gmail-A", "https://a.example.com", "alice", ENTRY_PASSWORD, "secret-note");

@@ -30,16 +30,17 @@
         <label for="login">Логин</label>
         <input type="text" id="login" th:field="*{login}" required maxlength="2048">
 
-        <label for="password">Пароль (введите заново)</label>
-        <!-- input-group: поле + глаз + генератор (Фаза 1 password-generator-copy).
-             Генерация перезаписывает поле «введите заново» — это ок: старый пароль
-             в HTML не выносится (безопасность Task-11). -->
+        <label for="password">Пароль</label>
+        <!-- G1: пустое поле = «не менять пароль» (VaultService сохраняет прежний
+             шифротекст). Генератор перезапишет поле и оно станет новым паролем. -->
         <div class="input-group">
-            <input type="password" id="password" th:field="*{password}" required maxlength="4096"
-                   data-password-field autocomplete="new-password">
+            <input type="password" id="password" th:field="*{password}" maxlength="4096"
+                   data-password-field autocomplete="new-password"
+                   placeholder="Оставьте пустым, чтобы не менять пароль">
             <button type="button" class="small" data-toggle-password>Показать</button>
             <button type="button" class="small" data-generate-password>Сгенерировать</button>
         </div>
+        <span class="muted">Оставьте пустым, чтобы не менять пароль; при генерации показан открыто — проверьте и сохраните</span>
         <!-- Опции генератора: всегда видимы; серверная валидация (@Size) — страховка -->
         <div class="password-options">
             <label>Длина <input type="number" data-pw-length min="12" max="64" value="20"></label>

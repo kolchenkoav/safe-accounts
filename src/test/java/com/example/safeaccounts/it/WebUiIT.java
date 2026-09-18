@@ -965,6 +965,61 @@ class WebUiIT {
                         org.hamcrest.Matchers.containsString("btn-copy"))));
     }
 
+    // -- 12. G1: пароль не сбрасывается при edit ---------------------------------
+
+    /** Edit с пустым паролем — старый сохраняется; с паролем — обновляется. */
+    @Test
+    void editWithBlankPasswordKeepsOldPassword() throws Exception {
+        registerUser("g1user");
+        MockHttpSessionHolder holder = login("g1user");
+        createEntry(holder, "G1 запись", "https://example.com", "alice", ENTRY_PASSWORD);
+        String entryId = firstEntryId(holder);
+
+        // Форма edit: пустое поле с подсказкой G1, генератор на месте
+        mockMvc.perform(get("/web/entries/" + entryId + "/edit").session(holder.session()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString("Оставьте пустым, чтобы не менять пароль"),
+                        org.hamcrest.Matchers.containsString("data-generate-password"),
+                        org.hamcrest.Matchers.containsString("data-password-field"))));
+
+        // Edit БЕЗ пароля — редирект; reveal показывает СТАРЫЙ пароль
+        mockMvc.perform(post("/web/entries/" + entryId + "/edit")
+                        .session(holder.session())
+                        .with(csrf())
+                        .param("name", "G1 запись-2")
+                        .param("site", "https://example.com")
+                        .param("login", "alice")
+                        .param("password", "")
+                        .param("notes", ""))
+                .andExpect(status().is3xxRedirection());
+
+        mockMvc.perform(post("/web/entries/" + entryId + "/reveal")
+                        .session(holder.session())
+                        .with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString(ENTRY_PASSWORD)));
+
+        // Edit С новым паролем — reveal показывает новый
+        mockMvc.perform(post("/web/entries/" + entryId + "/edit")
+                        .session(holder.session())
+                        .with(csrf())
+                        .param("name", "G1 запись-3")
+                        .param("site", "https://example.com")
+                        .param("login", "alice")
+                        .param("password", "G1-New-Pass-456!")
+                        .param("notes", ""))
+                .andExpect(status().is3xxRedirection());
+
+        mockMvc.perform(post("/web/entries/" + entryId + "/reveal")
+                        .session(holder.session())
+                        .with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("G1-New-Pass-456!")));
+    }
+
     private static String htmlOf(MvcResult result)
             throws java.io.UnsupportedEncodingException {
         return result.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
