@@ -281,8 +281,8 @@ public class TagService {
     }
 
     /**
-     * Снимает тег с записи. Идемпотентно: тег, не привязанный к записи,
-     * ничего не меняет и аудита не пишет.
+    /** Снимает тег с записи. Идемпотентно: тег, не привязанный к записи,
+     *  ничего не меняет и аудита не пишет.
      *
      * @return был ли тег действительно привязан и снят (для точного flash)
      * @throws VaultException NOT_FOUND, если записи нет или она чужая
@@ -299,6 +299,17 @@ public class TagService {
             recordEntryTagsChanged(actor, entryId, entry.getTags().size());
         }
         return removed;
+    }
+
+    /**
+     * Находит тег по имени (case-insensitive) или создаёт новый — без привязки
+     * к записи. Используется сканером слабых паролей (G2) для служебного тега
+     * «weak-password». Гонка созданий обрабатывается как в attachOrCreate.
+     *
+     * @throws IllegalArgumentException если имя не проходит валидацию
+     */
+    public Tag findOrCreateByName(User actor, String rawName) {
+        return findOrCreateTag(actor, rawName, "scanner").tag();
     }
 
     /**

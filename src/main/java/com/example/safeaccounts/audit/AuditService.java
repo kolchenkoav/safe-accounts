@@ -54,6 +54,7 @@ public static final String SECRET_REVEALED = "SECRET_REVEALED";
     /** Экспорт/импорт сейфа в CSV (Task-07 / Task-08). Агрегаты, без CSV/расшифрованных значений. */
     public static final String VAULT_EXPORTED = "VAULT_EXPORTED";
     public static final String VAULT_IMPORTED = "VAULT_IMPORTED";
+    public static final String VAULT_SCANNED = "VAULT_SCANNED";
 
     /** Управление тегами (Task-08, Фаза 5). Имена тегов — не секрет. */
     public static final String TAG_CREATED = "TAG_CREATED";

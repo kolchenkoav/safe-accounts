@@ -18,6 +18,9 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li>{@link #BUCKET_IMPORT} — для {@code POST /api/vault/import} и
  *       {@code POST /api/admin/users/{id}/vault/import} (Фаза 6, защита
  *       от массовой записи в сейф).</li>
+ *   <li>{@link #BUCKET_SCAN} — для {@code POST /api/vault/scan} и
+ *       {@code POST /api/admin/users/{id}/vault/scan} (G2: расшифровка
+ *       до 10 000 записей — CPU-интерсив; 1 запуск/60 с на пользователя).</li>
  * </ul>
  * Ключ внутри bucket'а — IP клиента из {@code request.getRemoteAddr()}.
  * Расшифровка токена в фильтре не требуется, что согласуется с уже
@@ -40,6 +43,9 @@ public class RateLimiter {
     /** Bucket для /api/vault/import и /api/admin/users/{id}/vault/import. */
     public static final String BUCKET_IMPORT = "import";
 
+    /** Bucket для /api/vault/scan и /api/admin/users/{id}/vault/scan (G2). */
+    public static final String BUCKET_SCAN = "scan";
+
     /** Имя bucket'а по умолчанию для обратной совместимости со старым API. */
     private static final String DEFAULT_BUCKET = BUCKET_AUTH;
 
@@ -53,10 +59,13 @@ public class RateLimiter {
             @Value("${app.rate-limit.window-seconds:60}") long authWindowSeconds,
             @Value("${app.rate-limit.max-requests:10}") int authMaxRequests,
             @Value("${app.vault.import.rate-limit.window-seconds:60}") long importWindowSeconds,
-            @Value("${app.vault.import.rate-limit.max-requests:3}") int importMaxRequests) {
+            @Value("${app.vault.import.rate-limit.max-requests:3}") int importMaxRequests,
+            @Value("${app.vault.scan.rate-limit.window-seconds:60}") long scanWindowSeconds,
+            @Value("${app.vault.scan.rate-limit.max-requests:1}") int scanMaxRequests) {
         this.buckets = Map.of(
                 BUCKET_AUTH, new Bucket(authWindowSeconds * 1000L, authMaxRequests),
-                BUCKET_IMPORT, new Bucket(importWindowSeconds * 1000L, importMaxRequests));
+                BUCKET_IMPORT, new Bucket(importWindowSeconds * 1000L, importMaxRequests),
+                BUCKET_SCAN, new Bucket(scanWindowSeconds * 1000L, scanMaxRequests));
     }
 
     // -- устаревший API (single-arg), делегирует в bucket AUTH -----------------

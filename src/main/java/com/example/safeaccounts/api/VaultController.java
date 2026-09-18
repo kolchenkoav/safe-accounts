@@ -2,7 +2,9 @@ package com.example.safeaccounts.api;
 
 import com.example.safeaccounts.domain.User;
 import com.example.safeaccounts.security.AuthUser;
+import com.example.safeaccounts.service.ScanRateLimitedException;
 import com.example.safeaccounts.service.VaultExportImportService;
+import com.example.safeaccounts.service.VaultScanService;
 import com.example.safeaccounts.service.VaultService;
 import com.example.safeaccounts.service.csv.ConflictStrategy;
 import com.example.safeaccounts.service.csv.CsvFilenames;
@@ -59,11 +61,14 @@ public class VaultController {
 
     private final VaultService vaultService;
     private final VaultExportImportService exportImportService;
+    private final VaultScanService scanService;
 
     public VaultController(VaultService vaultService,
-                           VaultExportImportService exportImportService) {
+                           VaultExportImportService exportImportService,
+                           VaultScanService scanService) {
         this.vaultService = vaultService;
         this.exportImportService = exportImportService;
+        this.scanService = scanService;
     }
 
     /** Список записей текущего пользователя (без паролей и notes). */
@@ -232,6 +237,13 @@ public class VaultController {
             long totalElements,
             int totalPages,
             List<T> content) {
+    }
+
+    /** Сканер слабых паролей (G2): классификация + синхронизация тега weak-password. */
+    @PostMapping("/scan")
+    public VaultScanService.ScanReport scan(@AuthenticationPrincipal AuthUser principal) {
+        User actor = currentUser(principal);
+        return scanService.scan(actor, actor);
     }
 
     // -- export/import helpers ------------------------------------------------

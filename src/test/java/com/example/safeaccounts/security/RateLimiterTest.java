@@ -16,10 +16,10 @@ class RateLimiterTest {
 
     @BeforeEach
     void setUp() {
-        // ВАЖНО: сигнатура конструктора — (authWindow, authMax, importWindow, importMax).
-        // Параметры bucket'а AUTH: окно 60с, лимит 5 — повторяет ранее существовавший тест-набор.
-        // Параметры bucket'а IMPORT: окно 60с, лимит 2 — отдельные сценарии ниже.
-        rateLimiter = new RateLimiter(60, 5, 60, 2);
+        // ВАЖНО: сигнатура конструктора — (authWindow, authMax, importWindow, importMax,
+        // scanWindow, scanMax). Параметры bucket'а AUTH: окно 60с, лимит 5 — повторяет
+        // ранее существовавший тест-набор. IMPORT: окно 60с, лимит 2. SCAN: окно 60с, лимит 1.
+        rateLimiter = new RateLimiter(60, 5, 60, 2, 60, 1);
     }
 
     // -- bucket AUTH (исходное поведение Task-09) ----------------------------
@@ -115,7 +115,7 @@ class RateLimiterTest {
     @Test
     void importBucketReturnsRetryAfterSecondsOnLimit() {
         // Минимальное окно (1с) и лимит 1: после первого запроса следующий сразу отклонён.
-        RateLimiter small = new RateLimiter(60, 100, 1, 1);
+        RateLimiter small = new RateLimiter(60, 100, 1, 1, 60, 1);
         String ip = "10.1.0.3";
         assertThat(small.tryAcquireWithRetryAfter(ip, RateLimiter.BUCKET_IMPORT).allowed())
                 .isTrue();
@@ -128,7 +128,7 @@ class RateLimiterTest {
     @Test
     void importBucketResetsAfterWindow() throws Exception {
         // Окно 1с — после ожидания счётчик сбрасывается.
-        RateLimiter small = new RateLimiter(60, 100, 1, 1);
+        RateLimiter small = new RateLimiter(60, 100, 1, 1, 60, 1);
         String ip = "10.1.0.4";
         assertThat(small.tryAcquire(ip, RateLimiter.BUCKET_IMPORT)).isTrue();
         assertThat(small.tryAcquire(ip, RateLimiter.BUCKET_IMPORT)).isFalse();

@@ -314,6 +314,56 @@ class ObservabilitySecurityIT {
         });
     }
 
+    // -- G2: сканер слабых паролей не пишет секреты в логи/аудит ---------------
+
+    @Test
+    void weakPasswordScanDoesNotLeakPasswordsIntoLogsOrAudit(
+            org.springframework.boot.test.system.CapturedOutput captured) throws Exception {
+        String username = "obs-scan-user";
+        // маркер — слабый пароль (иначе скан не классифицирует запись как weak)
+        String weakPassword = "123456";
+
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"%s\",\"password\":\"%s\"}"
+                                .formatted(username, PASSWORD)))
+                .andExpect(status().isCreated());
+        MvcResult login = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"%s\",\"password\":\"%s\"}"
+                                .formatted(username, PASSWORD)))
+                .andExpect(status().isOk())
+                .andReturn();
+        String token = objectMapper.readTree(login.getResponse().getContentAsString())
+                .get("accessToken").asText();
+
+        mockMvc.perform(post("/api/vault")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"ObsScan\",\"site\":\"https://example.com\","
+                                + "\"login\":\"alice\",\"password\":\"" + weakPassword
+                                + "\",\"notes\":\"obs-note\"}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/api/vault/scan")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.weakCount").value(1))
+                .andExpect(jsonPath("$.scanned").value(1));
+
+        // Логи и аудит не содержат расшифрованного пароля записи
+        assertThat(captured.getAll()).doesNotContain(weakPassword);
+        transactionTemplate.executeWithoutResult(status -> {
+            var events = auditEventRepository.findAll();
+            for (var event : events) {
+                assertThat(String.valueOf(event.getDetailsJson()))
+                        .as("audit detailsJson must not contain weak password for %s",
+                                event.getType())
+                        .doesNotContain(weakPassword);
+            }
+        });
+    }
+
     // -- Фаза 5: web CSV export/import без утечек в логи и аудит ---------------
 
     @Test

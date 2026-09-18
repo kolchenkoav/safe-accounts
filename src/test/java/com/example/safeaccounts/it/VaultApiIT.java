@@ -27,6 +27,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.util.Map;
 import java.util.UUID;
 
+import com.example.safeaccounts.security.RateLimiter;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -71,6 +73,8 @@ class VaultApiIT {
     @Autowired
     TransactionTemplate transactionTemplate;
     @Autowired
+    RateLimiter rateLimiter;
+    @Autowired
     com.example.safeaccounts.config.AdminBootstrap adminBootstrap;
 
     private static final String PASSWORD = "Str0ng-Passw0rd!";
@@ -78,6 +82,7 @@ class VaultApiIT {
 
     @BeforeEach
     void cleanDatabase() {
+        rateLimiter.reset();
         transactionTemplate.executeWithoutResult(status -> {
             auditEventRepository.deleteAll();
             vaultEntryRepository.deleteAll();
@@ -209,6 +214,134 @@ private UUID createEntry(String token, String name, String site, String login,
                                 new VaultEntryCreateRequest(
                                         "Gmail", "https://example.com", "alice", null, null))))
                 .andExpect(status().isBadRequest());
+    }
+
+    // -- G2: сканер слабых паролей ---------------------------------------------
+
+    /** Скан помечает слабую запись тегом weak-password, сильную — нет. */
+    @Test
+    void scanTagsWeakEntryAndSkipsStrongOne() throws Exception {
+        String token = registerAndLogin("scan-weak-" + System.nanoTime());
+        UUID weakId = createEntry(token, "Weak", "https://example.com", "alice", "123456", null);
+        UUID strongId = createEntry(token, "Strong", "https://example.com", "bob",
+                "Zk9#mQ2$vL8!wR4&xJ6%", null);
+
+        mockMvc.perform(post("/api/vault/scan").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scanned").value(2))
+                .andExpect(jsonPath("$.weakCount").value(1))
+                .andExpect(jsonPath("$.tagged").value(1))
+                .andExpect(jsonPath("$.untagged").value(0))
+                .andExpect(jsonPath("$.truncated").value(false))
+                .andExpect(jsonPath("$.weakEntries.length()").value(1))
+                .andExpect(jsonPath("$.weakEntries[0].id").value(weakId.toString()))
+                .andExpect(jsonPath("$.weakEntries[0].name").value("Weak"));
+
+        // В отчёте нет самих паролей; тег на слабой, не на сильной
+        String body = mockMvc.perform(get("/api/vault/" + strongId)
+                        .header("Authorization", "Bearer " + token))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body).doesNotContain("123456");
+
+        String weakTags = mockMvc.perform(get("/api/vault/" + weakId + "/tags")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(weakTags).contains("weak-password");
+        String strongTags = mockMvc.perform(get("/api/vault/" + strongId + "/tags")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(strongTags).doesNotContain("weak-password");
+    }
+
+    /** Повторный скан после смены пароля снимает тег (diff). */
+    @Test
+    void rescanAfterPasswordChangeRemovesWeakTag() throws Exception {
+        String token = registerAndLogin("scan-rescan-" + System.nanoTime());
+        UUID id = createEntry(token, "Will-Fix", "https://example.com", "alice", "123456", null);
+
+        mockMvc.perform(post("/api/vault/scan").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tagged").value(1));
+
+        String tagsBody = mockMvc.perform(get("/api/vault/" + id + "/tags")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(tagsBody).contains("weak-password");
+
+        // Сброс лимитера: квота 1/60 c потрачена первым сканом этого теста
+        // (429 при исчерпании покрыт отдельным scanIsRateLimitedToOncePerWindow)
+        rateLimiter.reset();
+        mockMvc.perform(put("/api/vault/" + id)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new VaultEntryUpdateRequest("Will-Fix", "https://example.com",
+                                        "alice", "Zk9#mQ2$vL8!wR4&xJ6%", null))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/vault/scan").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.untagged").value(1))
+                .andExpect(jsonPath("$.weakCount").value(0));
+
+        tagsBody = mockMvc.perform(get("/api/vault/" + id + "/tags")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(tagsBody).doesNotContain("weak-password");
+    }
+
+    /** 429 при повторном скане в окне (бакет scan: 1/60 c). */
+    @Test
+    void scanIsRateLimitedToOncePerWindow() throws Exception {
+        String token = registerAndLogin("scan-ratelimit-" + System.nanoTime());
+        mockMvc.perform(post("/api/vault/scan").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/vault/scan").header("Authorization", "Bearer " + token))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().string("Retry-After", org.hamcrest.Matchers.notNullValue()));
+    }
+
+    /** Админ-скан чужого сейфа 200; не-админ — 403. */
+    @Test
+    void adminScanOtherVaultAllowedNonAdminForbidden() throws Exception {
+        String targetName = "scan-target-" + System.nanoTime();
+        String targetToken = registerAndLogin(targetName);
+        UUID targetUserId = userRepository.findByUsername(targetName).orElseThrow().getId();
+        createEntry(targetToken, "Weak-Target", "https://example.com", "alice", "123456", null);
+
+        // admin: register -> changeRole в репозитории -> логин (роль в токене);
+        // повторный register дал бы 409 (имя занято)
+        String adminName = "scan-admin-" + System.nanoTime();
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new RegisterRequest(adminName, PASSWORD))))
+                .andExpect(status().isCreated());
+        transactionTemplate.executeWithoutResult(status -> userRepository
+                .findByUsername(adminName).orElseThrow()
+                .changeRole("ROLE_ADMIN", java.time.Instant.now()));
+        MvcResult adminLogin = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new LoginRequest(adminName, PASSWORD))))
+                .andExpect(status().isOk())
+                .andReturn();
+        String adminToken = objectMapper.readTree(
+                adminLogin.getResponse().getContentAsString()).get("accessToken").asText();
+
+        mockMvc.perform(post("/api/admin/users/" + targetUserId + "/vault/scan")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scanned").value(1))
+                .andExpect(jsonPath("$.weakCount").value(1))
+                .andExpect(jsonPath("$.tagged").value(1));
+
+        mockMvc.perform(post("/api/admin/users/" + targetUserId + "/vault/scan")
+                        .header("Authorization", "Bearer " + targetToken))
+                .andExpect(status().isForbidden());
     }
 
     @Test

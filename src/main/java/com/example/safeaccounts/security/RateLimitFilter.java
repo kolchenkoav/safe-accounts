@@ -138,6 +138,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
      * Возвращает имя bucket'а для указанного запроса: import-эндпоинты
      * (api и web) → {@link RateLimiter#BUCKET_IMPORT}, всё остальное
      * (включая login/register) → {@link RateLimiter#BUCKET_AUTH}.
+     * Scan (G2) лимитируется в сервисе ПОСЛЕ аутентификации: у Bearer-запросов
+     * SecurityContext на фазе фильтра пуст (anonymous), и ключ user:<name>
+     * деградировал бы до IP.
      */
     private String pickBucket(HttpServletRequest request) {
         String path = request.getRequestURI();

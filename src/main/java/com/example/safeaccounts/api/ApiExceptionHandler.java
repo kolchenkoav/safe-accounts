@@ -173,6 +173,17 @@ public class ApiExceptionHandler {
                 .body(ProblemDetail.forStatusAndDetail(status, neutralize(e.getMessage())));
     }
 
+    /** Квота скана исчерпана (G2): 429 + Retry-After, без деталей аккаунта. */
+    @ExceptionHandler(com.example.safeaccounts.service.ScanRateLimitedException.class)
+    public ResponseEntity<ProblemDetail> handleScanRateLimited(
+            com.example.safeaccounts.service.ScanRateLimitedException e) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(org.springframework.http.HttpHeaders.RETRY_AFTER,
+                        String.valueOf(e.getRetryAfterSeconds()))
+                .body(ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS,
+                        "Too many scan requests, try again later"));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ProblemDetail> handleUnexpected(Exception e) {
         // Task-11: ResponseStatusException уже несет корректный статус

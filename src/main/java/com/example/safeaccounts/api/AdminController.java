@@ -6,6 +6,7 @@ import com.example.safeaccounts.service.AdminService;
 import com.example.safeaccounts.service.AuthServiceException;
 import com.example.safeaccounts.service.KeyRotationException;
 import com.example.safeaccounts.service.VaultExportImportService;
+import com.example.safeaccounts.service.VaultScanService;
 import com.example.safeaccounts.service.csv.ConflictStrategy;
 import com.example.safeaccounts.service.csv.CsvFilenames;
 import com.example.safeaccounts.service.csv.ExportPayload;
@@ -52,11 +53,14 @@ public class AdminController {
 
     private final AdminService adminService;
     private final VaultExportImportService exportImportService;
+    private final VaultScanService scanService;
 
     public AdminController(AdminService adminService,
-                           VaultExportImportService exportImportService) {
+                           VaultExportImportService exportImportService,
+                           VaultScanService scanService) {
         this.adminService = adminService;
         this.exportImportService = exportImportService;
+        this.scanService = scanService;
     }
 
     // -- пользователи ---------------------------------------------------------
@@ -240,6 +244,15 @@ public class AdminController {
         return ResponseEntity.status(status)
                 .body(ProblemDetail.forStatusAndDetail(status,
                         "Key rotation failed: some DEKs could not be rewrapped"));
+    }
+
+    /** Сканер слабых паролей в сейфе пользователя (G2). actor — администратор. */
+    @PostMapping("/users/{id}/vault/scan")
+    public VaultScanService.ScanReport scanUserVault(
+            @AuthenticationPrincipal AuthUser principal,
+            @PathVariable UUID id) {
+        User target = requireUserOrNotFound(id);
+        return scanService.scan(currentUser(principal), target);
     }
 
     // -- helpers --------------------------------------------------------------

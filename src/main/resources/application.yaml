@@ -121,6 +121,14 @@ app:
       rate-limit:
         window-seconds: ${APP_VAULT_IMPORT_RATE_LIMIT_WINDOW_SECONDS:60}
         max-requests: ${APP_VAULT_IMPORT_RATE_LIMIT_MAX_REQUESTS:3}
+    scan:
+      rate-limit:
+        # G2: расшифровка до 10 000 записей — CPU-интерсивно; 1 запуск/60 c на пользователя
+        window-seconds: ${APP_VAULT_SCAN_RATE_LIMIT_WINDOW_SECONDS:60}
+        max-requests: ${APP_VAULT_SCAN_RATE_LIMIT_MAX_REQUESTS:1}
+  scan:
+    # Порог стойкости zxcvbn (0..4): слабым считается score <= порога (§7.2)
+    weak-score: ${APP_SCAN_WEAK_SCORE:1}
 
 springdoc:
   api-docs:

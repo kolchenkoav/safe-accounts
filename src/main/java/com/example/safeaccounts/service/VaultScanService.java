@@ -1,0 +1,230 @@
+package com.example.safeaccounts.service;
+
+import com.example.safeaccounts.crypto.AesGcmCryptoService;
+import com.example.safeaccounts.audit.AuditService;
+import com.example.safeaccounts.crypto.WrappedDek;
+import com.example.safeaccounts.security.RateLimiter;
+import com.example.safeaccounts.domain.Tag;
+import com.example.safeaccounts.domain.User;
+import com.example.safeaccounts.domain.VaultEntry;
+import com.example.safeaccounts.repository.TagRepository;
+import com.example.safeaccounts.repository.VaultEntryRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+
+/**
+ * Сканер слабых паролей (G2, план feat-weak-password-scan §3.3).
+ *
+ * <p>Порционно читает записи владельца (пагинация), расшифровывает пароли
+ * DEK'ом владельца (паттерн {@code VaultService.get}, reveal), считает
+ * повторное использование (SHA-256 расшифрованного пароля — в памяти скана,
+ * в логи/отчёт не пишется), классифицирует через
+ * {@link WeakPasswordEvaluator#evaluate} и синхронизирует служебный тег
+ * {@link #WEAK_PASSWORD_TAG_NAME}: ставится слабым, снимается у тех, кто
+ * стал сильным — точный diff, идемпотентно.
+ *
+ * <p>Лимит {@link #MAX_SCAN_ENTRIES} согласован с MAX_EXPORT_ROWS (10 000):
+ * при превышении скан останавливается, в отчёте {@code truncated=true}.
+ *
+ * <p>Безопасность: пароли и причины не логируются; в аудит
+ * ({@code VAULT_SCANNED}) пишутся только агрегаты (actor, target, scanned,
+ * weak, tagged, untagged, truncated, durationMs).
+ */
+@Service
+public class VaultScanService {
+
+    private static final Logger log = LoggerFactory.getLogger(VaultScanService.class);
+
+    /** Служебный per-user тег слабых записей (решение §7.3 плана). */
+    public static final String WEAK_PASSWORD_TAG_NAME = "weak-password";
+
+    /** Лимит записей скана — согласован с MAX_EXPORT_ROWS (10 000). */
+    public static final int MAX_SCAN_ENTRIES = 10_000;
+
+    private static final int PAGE_SIZE = 500;
+
+    private final VaultEntryRepository vaultEntryRepository;
+    private final TagService tagService;
+    private final AesGcmCryptoService cryptoService;
+    private final WeakPasswordEvaluator evaluator;
+    private final ScanProperties scanProperties;
+    private final AuditService auditService;
+    private final RateLimiter rateLimiter;
+
+    public VaultScanService(VaultEntryRepository vaultEntryRepository,
+                            TagService tagService,
+                            AesGcmCryptoService cryptoService,
+                            WeakPasswordEvaluator evaluator,
+                            ScanProperties scanProperties,
+                            AuditService auditService,
+                            RateLimiter rateLimiter) {
+        this.vaultEntryRepository = vaultEntryRepository;
+        this.tagService = tagService;
+        this.cryptoService = cryptoService;
+        this.evaluator = evaluator;
+        this.scanProperties = scanProperties;
+        this.auditService = auditService;
+        this.rateLimiter = rateLimiter;
+    }
+
+    /** Слабая запись в отчёте: расшифрованный name + причины (без пароля). */
+    public record WeakEntry(UUID id, String name, List<String> reasons) {
+    }
+
+    /**
+     * @param scanned    сколько записей просмотрено
+     * @param weakCount  сколько признаны слабыми
+     * @param tagged     сколько тегов поставлено в этом скане
+     * @param untagged   сколько тегов снято в этом скане
+     * @param truncated  true, если лимит записей превышен
+     * @param weakEntries слабые записи (name расшифрован — только владельцу/админу)
+     */
+    public record ScanReport(int scanned, int weakCount, int tagged, int untagged,
+                             boolean truncated, List<WeakEntry> weakEntries) {
+    }
+
+    /**
+     * Скан сейфа {@code target} от лица {@code actor} (self или ADMIN).
+     * Транзакция одна на весь скан: сущности страниц остаются managed,
+     * пометки тегами применяются батчами перед коммитом.
+     */
+    @Transactional
+    public ScanReport scan(User actor, User target) {
+        // Квота скана ПОСЛЕ аутентификации (Bearer-запросы на фазе фильтра ещё
+        // не аутентифицированы — SecurityContext пуст): ключ user:<target>;
+        // бакет BUCKET_SCAN (1/60 c по умолчанию). У админ-скана лимит — на
+        // сканируемый сейф (защита операции, а не админа).
+        var decision = rateLimiter.tryAcquireWithRetryAfter(
+                "user:" + target.getUsername(), RateLimiter.BUCKET_SCAN);
+        if (!decision.allowed()) {
+            throw new ScanRateLimitedException(decision.retryAfterSeconds());
+        }
+        long startNanos = System.nanoTime();
+
+        var dek = cryptoService.unwrapDek(new WrappedDek(
+                target.getDekWrapped(), target.getDekIv(), target.getDekKekId()));
+        Tag weakTag = tagService.findOrCreateByName(target, WEAK_PASSWORD_TAG_NAME);
+
+        // Текущее множество помеченных (до скана) — для точного diff.
+        Set<UUID> currentlyTagged = new HashSet<>();
+        Pageable taggedPageable = PageRequest.of(0, 500);
+        Page<VaultEntry> taggedPage;
+        do {
+            taggedPage = vaultEntryRepository.findAllByUser_IdAndTags_Id(
+                    target.getId(), weakTag.getId(), taggedPageable);
+            taggedPage.getContent().forEach(e -> currentlyTagged.add(e.getId()));
+            taggedPageable = taggedPage.nextOrLastPageable();
+        } while (taggedPage.hasNext());
+
+        // Проход по страницам: расшифровка + reuse-детект (в памяти скана).
+        List<VaultEntry> scannedEntries = new ArrayList<>();
+        List<String> decryptedPasswords = new ArrayList<>();
+        Map<String, Integer> reuseCounts = new HashMap<>();
+        boolean truncated = false;
+        int scanned = 0;
+        int pageIndex = 0;
+        Page<VaultEntry> page;
+        do {
+            page = vaultEntryRepository.findAllByUser_Id(target.getId(), PageRequest.of(pageIndex++, PAGE_SIZE));
+            for (VaultEntry entry : page.getContent()) {
+                if (scanned >= MAX_SCAN_ENTRIES) {
+                    truncated = true;
+                    break;
+                }
+                String password = cryptoService.decrypt(entry.getPasswordEnc(), dek);
+                scannedEntries.add(entry);
+                decryptedPasswords.add(password);
+                reuseCounts.merge(sha256Hex(password), 1, Integer::sum);
+                scanned++;
+            }
+            if (truncated) {
+                break;
+            }
+        } while (page.hasNext());
+
+        // Классификация + расшифровка name только для слабых.
+        WeakScanConfig cfg = new WeakScanConfig(scanProperties.getWeakScore());
+        Set<UUID> weakIds = new HashSet<>();
+        List<WeakEntry> weakEntries = new ArrayList<>();
+        for (int i = 0; i < scannedEntries.size(); i++) {
+            VaultEntry entry = scannedEntries.get(i);
+            String password = decryptedPasswords.get(i);
+            List<String> reasons = evaluator.evaluate(
+                    password, reuseCounts.getOrDefault(sha256Hex(password), 0), cfg);
+            if (!reasons.isEmpty()) {
+                weakIds.add(entry.getId());
+                String name = cryptoService.decrypt(entry.getNameEnc(), dek);
+                weakEntries.add(new WeakEntry(entry.getId(), name, List.copyOf(reasons)));
+            }
+        }
+
+        // Точный diff: ставим слабым, у исправившихся снимаем.
+        int tagged = 0;
+        int untagged = 0;
+        Set<UUID> scannedIds = new HashSet<>();
+        for (VaultEntry entry : scannedEntries) {
+            scannedIds.add(entry.getId());
+            if (weakIds.contains(entry.getId()) && !currentlyTagged.contains(entry.getId())) {
+                entry.getTags().add(weakTag);
+                tagged++;
+            }
+        }
+        for (VaultEntry entry : vaultEntryRepository
+                .findAllByUser_IdAndTags_Id(target.getId(), weakTag.getId(), Pageable.unpaged())
+                .getContent()) {
+            if (scannedIds.contains(entry.getId()) && !weakIds.contains(entry.getId())) {
+                entry.getTags().remove(weakTag);
+                untagged++;
+            }
+        }
+
+        long durationMs = (System.nanoTime() - startNanos) / 1_000_000L;
+        log.info("Vault scanned: actor={}, target={}, scanned={}, weak={}, tagged={}, "
+                        + "untagged={}, truncated={}, durationMs={}",
+                actor.getUsername(), target.getUsername(), scanned, weakIds.size(),
+                tagged, untagged, truncated, durationMs);
+        auditService.record(actor, AuditService.VAULT_SCANNED, null, "User",
+                target.getId().toString(),
+                Map.of("actor", actor.getUsername(),
+                        "target", target.getUsername(),
+                        "scanned", scanned,
+                        "weak", weakIds.size(),
+                        "tagged", tagged,
+                        "untagged", untagged,
+                        "truncated", truncated,
+                        "durationMs", durationMs));
+
+        return new ScanReport(scanned, weakIds.size(), tagged, untagged,
+                truncated, List.copyOf(weakEntries));
+    }
+
+    private static String sha256Hex(String value) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+    }
+}
