@@ -55,7 +55,6 @@ public static final String SECRET_REVEALED = "SECRET_REVEALED";
     public static final String VAULT_EXPORTED = "VAULT_EXPORTED";
     public static final String VAULT_IMPORTED = "VAULT_IMPORTED";
     public static final String VAULT_SCANNED = "VAULT_SCANNED";
-    public static final String VAULT_SCAN_REPORT_EXPORTED = "VAULT_SCAN_REPORT_EXPORTED";
 
     /** Управление тегами (Task-08, Фаза 5). Имена тегов — не секрет. */
     public static final String TAG_CREATED = "TAG_CREATED";

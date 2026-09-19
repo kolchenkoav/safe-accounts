@@ -285,45 +285,6 @@ public class WebAdminController {
         return "scan-report";
     }
 
-    /**
-     * CSV-экспорт отчёта скана (admin, G2): кэш target'а, filename scan-user-*.
-     * Пустой кэш → flash + redirect на список. Не-админ — 403 (SecurityConfig).
-     */
-    @GetMapping("/web/admin/users/{id}/vault/scan/report/export")
-    public Object exportScanReport(@AuthenticationPrincipal AuthUser principal,
-                                   @PathVariable UUID id,
-                                   @RequestParam(defaultValue = "false") boolean bom,
-                                   RedirectAttributes redirectAttributes) {
-        User target;
-        try {
-            target = adminService.requireUserById(id);
-        } catch (AuthServiceException e) {
-            redirectAttributes.addFlashAttribute("flashError", "Пользователь не найден");
-            return "redirect:/web/admin/users";
-        }
-        var cached = scanService.lastScan(target);
-        if (cached.isEmpty()) {
-            redirectAttributes.addFlashAttribute("flashError",
-                    "У пользователя нет отчёта — запустите скан");
-            return "redirect:/web/admin/users";
-        }
-        var file = scanService.buildReportCsv(cached.get(), principal.user(),
-                target, true, bom);
-        String filename = file.filename();
-        byte[] csv = file.csv();
-        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
-        headers.setContentType(org.springframework.http.MediaType
-                .parseMediaType("text/csv; charset=utf-8"));
-        headers.set(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
-                "attachment; filename=\"" + filename + "\"");
-        headers.add(CsvFilenames.EXPORT_WARNING_HEADER,
-                CsvFilenames.SCAN_WARNING_VALUE);
-        headers.setCacheControl("no-store");
-        headers.setContentLength(csv.length);
-        return new org.springframework.http.ResponseEntity<>(csv, headers,
-                org.springframework.http.HttpStatus.OK);
-    }
-
     /** Страница импорта CSV в чужой сейф (переиспользуется import.html). */
     @GetMapping("/web/admin/users/{id}/vault/import")
     public String importPage(@PathVariable UUID id,

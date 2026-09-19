@@ -29,8 +29,6 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.UUID;
 
 /**
@@ -360,39 +358,6 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
         model.addAttribute("report", report);
         model.addAttribute("own", true);
         return "scan-report";
-    }
-
-    /**
-     * Полный CSV-экспорт последнего скана (G2-отчёт, план feat-weak-password-report):
-     * преамбула-агрегаты `#`, колонки name,url,username,reasons,score,
-     * password_length,reuse_count,entry_id — БЕЗ паролей. Источник — кэш
-     * последнего скана (квота не тратится). Пустой кэш → flash + redirect.
-     * Заголовки — по паттерну vault-export: warning scan-report-…, no-store.
-     */
-    @GetMapping("/web/entries/scan/report/export")
-    public Object exportScanReport(@AuthenticationPrincipal AuthUser principal,
-                                   @RequestParam(defaultValue = "false") boolean bom,
-                                   RedirectAttributes redirectAttributes) {
-        var cached = vaultScanService.lastScan(principal.user());
-        if (cached.isEmpty()) {
-            redirectAttributes.addFlashAttribute("flashError",
-                    "Сначала запустите проверку паролей");
-            return "redirect:/web/entries";
-        }
-        var file = vaultScanService.buildReportCsv(cached.get(),
-                principal.user(), principal.user(), false, bom);
-        String filename = file.filename();
-        byte[] csv = file.csv();
-        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
-        headers.setContentType(org.springframework.http.MediaType
-                .parseMediaType("text/csv; charset=utf-8"));
-        headers.set(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
-                "attachment; filename=\"" + filename + "\"");
-        headers.add(CsvFilenames.EXPORT_WARNING_HEADER, CsvFilenames.SCAN_WARNING_VALUE);
-        headers.setCacheControl("no-store");
-        headers.setContentLength(csv.length);
-        return new org.springframework.http.ResponseEntity<>(csv, headers,
-                org.springframework.http.HttpStatus.OK);
     }
 
     /** Страница импорта CSV: предупреждение о plaintext + multipart-форма. */
