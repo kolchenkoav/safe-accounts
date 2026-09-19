@@ -236,4 +236,43 @@ class VaultScanServiceTest {
                 .contains("tagged").contains("untagged").contains("durationMs");
         assertThat(details).doesNotContain(WEAK_PASSWORD).doesNotContain(STRONG_PASSWORD);
     }
+
+    /** Ошибка расшифровки конкретной записи: failed=1, запись пропущена, скан идёт. */
+    @Test
+    void scanCountsFailedDecryptAndSkipsEntry() {
+        when(cryptoService.decrypt(eq("enc-pass-e2"), any()))
+                .thenThrow(new RuntimeException("decrypt boom"));
+
+        VaultScanService.ScanReport report = service.scan(target, target);
+
+        assertThat(report.failed()).as("failed").isEqualTo(1);
+        assertThat(report.scanned()).as("scanned").isEqualTo(2);
+        assertThat(report.weakCount()).as("weakCount").isEqualTo(2);
+        // Пропущенная запись не переклассифицируется: её тег не снимается.
+        assertThat(strongTagged.getTags()).containsExactly(weakTag);
+        var detailsCaptor = ArgumentCaptor.forClass(java.util.Map.class);
+        verify(auditService).record(eq(target), eq(AuditService.VAULT_SCANNED), isNull(),
+                eq("User"), eq(target.getId().toString()), detailsCaptor.capture());
+        assertThat(String.valueOf(detailsCaptor.getValue())).contains("failed=1");
+    }
+
+    /** Пагинация с детерминированным Sort: createdAt asc + id asc (tie-breaker). */
+    @Test
+    void scanPagesUseDeterministicSort() {
+        service.scan(target, target);
+
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(vaultEntryRepository, org.mockito.Mockito.atLeastOnce())
+                .findAllByUser_Id(eq(target.getId()), pageableCaptor.capture());
+        org.springframework.data.domain.Sort sort =
+                pageableCaptor.getAllValues().get(0).getSort();
+        org.springframework.data.domain.Sort.Order createdAt = sort.getOrderFor("createdAt");
+        org.springframework.data.domain.Sort.Order id = sort.getOrderFor("id");
+        assertThat(createdAt).as("createdAt sort order").isNotNull();
+        assertThat(createdAt.getDirection())
+                .isEqualTo(org.springframework.data.domain.Sort.Direction.ASC);
+        assertThat(id).as("id tie-breaker sort order").isNotNull();
+        assertThat(id.getDirection())
+                .isEqualTo(org.springframework.data.domain.Sort.Direction.ASC);
+    }
 }

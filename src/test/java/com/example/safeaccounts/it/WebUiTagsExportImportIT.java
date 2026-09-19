@@ -1018,6 +1018,43 @@ class WebUiTagsExportImportIT {
         assertThat(userTagCount("renameclash")).isEqualTo(2);
     }
 
+    /** G2: системный тег weak-password — web-flash в обоих направлениях rename. */
+    @Test
+    void renameWeakPasswordTagShowsReservedFlashBothDirections() throws Exception {
+        registerUser("scanresflash");
+        var session = login("scanresflash");
+
+        // (а) rename ДРУГОГО тега В weak-password → flash-ошибка, имя не меняется
+        createTag(session, "Regular-Tag");
+        String regularTagId = firstTagId(session);
+        mockMvc.perform(post("/web/tags/" + regularTagId + "/rename")
+                        .session(session).with(csrf()).param("name", "weak-password"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(flash().attribute("flashError",
+                        "Системный тег \"weak-password\" переименовывать нельзя"));
+
+        // (б) сам системный тег: создаётся сканом (запись со слабым паролём)
+        mockMvc.perform(post("/web/entries")
+                        .session(session).with(csrf())
+                        .param("name", "Weak-One")
+                        .param("site", "https://example.com")
+                        .param("login", "alice")
+                        .param("password", "123456")
+                        .param("notes", ""))
+                .andExpect(status().is3xxRedirection());
+        mockMvc.perform(post("/web/entries/scan").session(session).with(csrf()))
+                .andExpect(status().is3xxRedirection());
+        UUID weakTagId = tagRepository.findAllByUser_IdOrderByNameLowerAsc(userIdOf("scanresflash"))
+                .stream()
+                .filter(t -> "weak-password".equals(t.getNameLower()))
+                .findFirst().orElseThrow().getId();
+        mockMvc.perform(post("/web/tags/" + weakTagId + "/rename")
+                        .session(session).with(csrf()).param("name", "New-Name"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(flash().attribute("flashError",
+                        "Системный тег \"weak-password\" переименовывать нельзя"));
+    }
+
     @Test
     void importCsvWithExtraTagsColumnIgnoresItSilently() throws Exception {
         registerUser("tagcol");

@@ -13,6 +13,8 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -101,5 +103,45 @@ class WeakPasswordEvaluatorTest {
     void emptyOrNullPasswordIsNotEvaluated() {
         assertThat(real.evaluate(null, 5, cfg(4))).isEmpty();
         assertThat(real.evaluate("", 5, cfg(4))).isEmpty();
+    }
+
+    /** Русская плюрализация reuse-причины: 21 — ед. число, 11 — множественное. */
+    @Test
+    void reuseReasonPluralizationFollowsRussianRules() {
+        // 21: %10==1 и %100!=11 — «в 21 записи» (не «в 21 записях»)
+        assertThat(real.evaluate("Zk9#mQ2$vL8!wR4&xJ6%", 21, cfg(4)))
+                .anyMatch(r -> r.contains("в 21 записи"))
+                .noneMatch(r -> r.contains("записях"));
+        // 11: исключение из правила — «в 11 записях»
+        assertThat(real.evaluate("Zk9#mQ2$vL8!wR4&xJ6%", 11, cfg(4)))
+                .anyMatch(r -> r.contains("в 11 записях"));
+    }
+
+    /** DoS-гвард: пароль длиннее MAX_ZXCVBN_LENGTH — zxcvbn.measure не вызывается. */
+    @Test
+    void zxcvbnIsNotInvokedAboveMaxLength() {
+        WeakPasswordEvaluator mocked = new WeakPasswordEvaluator(zxcvbn);
+        String longPassword = "Zk9#mQ2$vL8!wR4&xJ6%".repeat(11); // 220 > 200
+
+        List<String> reasons = mocked.evaluate(longPassword, 0, cfg(1));
+
+        verify(zxcvbn, never()).measure(anyString());
+        assertThat(reasons).noneMatch(r -> r.contains("Простой пароль"));
+    }
+
+    /** Граница гварда: ровно MAX_ZXCVBN_LENGTH символов — zxcvbn ещё вызывается. */
+    @Test
+    void zxcvbnIsInvokedAtMaxLengthBoundary() {
+        WeakPasswordEvaluator mocked = new WeakPasswordEvaluator(zxcvbn);
+        Strength score3 = new Strength();
+        score3.setScore(3);
+        when(zxcvbn.measure(anyString())).thenReturn(score3);
+        String exactMax = "Zk9#mQ2$vL8!wR4&xJ6%".repeat(10);
+        org.assertj.core.api.Assertions
+                .assertThat(exactMax).hasSize(WeakPasswordEvaluator.MAX_ZXCVBN_LENGTH);
+
+        mocked.evaluate(exactMax, 0, cfg(1));
+
+        verify(zxcvbn).measure(exactMax);
     }
 }
