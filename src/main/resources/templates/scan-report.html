@@ -97,6 +97,22 @@
         Слабые записи помечены тегом «Слабый пароль» — фильтруйте список по тегу.
     </p>
 
+    <!-- G2: CSV-экспорт отчёта ПОСЛЕДНЕГО скана (кэш сервиса, квота не тратится).
+         GET-форма (CSRF не нужен); BOM для Excel. Действие задаётся
+         контроллером (scanExportAction: user/admin). Паролей в файле нет. -->
+    <form
+        th:if="${scanExportAction != null}"
+        th:action="@{${scanExportAction}}"
+        method="get"
+        class="inline"
+    >
+        <label class="checkbox">
+            <input type="checkbox" name="bom" value="true" />
+            BOM UTF-8 (для Excel)
+        </label>
+        <button type="submit" class="small">Экспорт отчёта (CSV)</button>
+    </form>
+
     <!-- Ссылки параметризованы: user → /web/entries, admin → /web/admin/users -->
     <div class="actions">
         <a class="button" th:href="@{/web/entries}">К записям</a>

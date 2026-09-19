@@ -29,6 +29,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.model;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
@@ -1053,6 +1054,52 @@ class WebUiIT {
                         .containsString("weak-password")));
     }
 
+    /** G2 (Фаза 4): user-экспорт отчёта скана — 200 CSV с агрегатами. */
+    @Test
+    void scanReportExportReturnsCsvAfterScan() throws Exception {
+        registerUser("webscan-export");
+        MockHttpSessionHolder holder = login("webscan-export");
+        createEntry(holder, "Экспортируемая слабая", "https://example.com", "alice", "123456");
+
+        mockMvc.perform(post("/web/entries/scan").session(holder.session()).with(csrf()))
+                .andExpect(status().is3xxRedirection());
+
+        MvcResult export = mockMvc.perform(get("/web/entries/scan/report/export")
+                        .session(holder.session()))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("text/csv;charset=UTF-8"))
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("attachment; filename=\"scan-report-webscan-export")))
+                .andReturn();
+        String csv = export.getResponse().getContentAsString(
+                java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(csv).contains("# Weak password scan report")
+                .contains("# scanned,1")
+                .contains("# weak,1")
+                .contains("Экспортируемая слабая")
+                .contains("Слишком короткий (меньше 12 символов)")
+                .contains("name,url,username,reasons,score,password_length,reuse_count,entry_id")
+                .doesNotContain("123456")
+                .doesNotContain("href=");
+    }
+
+    /** G2 (Фаза 4): экспорт без скана после рестарта — flash+redirect, не 500. */
+    @Test
+    void scanReportExportWithoutScanRedirectsWithFlash() throws Exception {
+        registerUser("webscan-noscan");
+        MockHttpSessionHolder holder = login("webscan-noscan");
+
+        mockMvc.perform(get("/web/entries/scan/report/export").session(holder.session()))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/entries/scan/report"))
+                .andExpect(flash().attribute("flashError", "Сначала запустите скан"));
+
+        // Страница отчёта без flash — на список записей (PRG-контракт)
+        mockMvc.perform(get("/web/entries/scan/report").session(holder.session()))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/entries"));
+    }
+
     /** Повторный скан после смены пароля на сильный — тег снят (untagged). */
     @Test
     void rescanAfterFixingPasswordRemovesWeakTag() throws Exception {
@@ -1155,7 +1202,24 @@ class WebUiIT {
                 .andExpect(content().string(org.hamcrest.Matchers.allOf(
                         org.hamcrest.Matchers.containsString("Пользователь:"),
                         org.hamcrest.Matchers.containsString("webscan-target"),
-                        org.hamcrest.Matchers.containsString("К списку пользователей"))));
+                        org.hamcrest.Matchers.containsString("К списку пользователей"))))
+                .andReturn();
+
+        // G2 (Фаза 4): admin-экспорт отчёта скана — 200, данные target,
+        // имя слабой записи БЕЗ ссылки (карточка чужая)
+        MvcResult export = mockMvc.perform(get("/web/admin/users/" + targetId
+                        + "/vault/scan/report/export").session(adminHolder.session()))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("text/csv;charset=UTF-8"))
+                .andReturn();
+        String csv = export.getResponse().getContentAsString(
+                java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(csv).contains("# Weak password scan report")
+                .contains("target,webscan-target")
+                .contains("Слабая у target")
+                .contains("Слишком короткий (меньше 12 символов)")
+                .doesNotContain(ENTRY_PASSWORD)
+                .doesNotContain("href=");
     }
 
     // -- 14. G1/G2: web-create с пустым паролем и сканер -------------------------

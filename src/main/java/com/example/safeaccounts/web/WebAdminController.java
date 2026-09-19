@@ -28,6 +28,7 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -59,16 +60,19 @@ public class WebAdminController {
     private final AdminService adminService;
     private final VaultExportImportService exportImportService;
     private final VaultScanService scanService;
-    private final ScanProperties scanProperties;
+    private final com.example.safeaccounts.service.ScanProperties scanProperties;
+    private final com.example.safeaccounts.service.csv.ScanReportCsvWriter scanReportCsvWriter;
 
     public WebAdminController(AdminService adminService,
                               VaultExportImportService exportImportService,
                               VaultScanService scanService,
-                              ScanProperties scanProperties) {
+                              com.example.safeaccounts.service.ScanProperties scanProperties,
+                              com.example.safeaccounts.service.csv.ScanReportCsvWriter scanReportCsvWriter) {
         this.adminService = adminService;
         this.exportImportService = exportImportService;
         this.scanService = scanService;
         this.scanProperties = scanProperties;
+        this.scanReportCsvWriter = scanReportCsvWriter;
     }
 
     // -- пользователи ----------------------------------------------------------
@@ -282,7 +286,30 @@ public class WebAdminController {
         model.addAttribute("targetUsername", target.getUsername());
         model.addAttribute("backToUsers", true);
         model.addAttribute("own", false);
+        model.addAttribute("scanExportAction",
+                "/web/admin/users/" + id + "/vault/scan/report/export");
         return "scan-report";
+    }
+
+    /** CSV-экспорт отчёта ПОСЛЕДНЕГО скана target (кэш сервиса, без квоты). */
+    @GetMapping("/web/admin/users/{id}/vault/scan/report/export")
+    public Object exportScanReport(@AuthenticationPrincipal AuthUser principal,
+                                   @PathVariable UUID id,
+                                   @RequestParam(defaultValue = "false") boolean bom,
+                                   RedirectAttributes redirectAttributes) {
+        User target;
+        try {
+            target = adminService.requireUserById(id);
+        } catch (AuthServiceException e) {
+            redirectAttributes.addFlashAttribute("flashError", "Пользователь не найден");
+            return "redirect:/web/admin/users";
+        }
+        var cached = scanService.lastScan(target);
+        if (cached.isEmpty()) {
+            redirectAttributes.addFlashAttribute("flashError", "Сначала запустите скан");
+            return "redirect:/web/admin/users/" + id + "/vault/scan/report";
+        }
+        return buildScanExportResponse(target.getUsername(), cached.get(), bom);
     }
 
     /** Страница импорта CSV в чужой сейф (переиспользуется import.html). */
@@ -352,6 +379,35 @@ public class WebAdminController {
                     "Некорректные параметры импорта");
             return importForm;
         }
+    }
+
+    /** Собирает CSV-ответ из кэшированного отчёта (общий с WebVaultController). */
+    private Object buildScanExportResponse(String username,
+                                            VaultScanService.CachedScan cached,
+                                            boolean bom) {
+        List<com.example.safeaccounts.service.csv.ScanReportCsvWriter.VaultScanWeakRow> rows =
+                cached.weakEntries().stream()
+                        .map(weak -> new com.example.safeaccounts.service.csv.ScanReportCsvWriter.VaultScanWeakRow(
+                                weak.name(), weak.site(), weak.login(), weak.reasons(),
+                                weak.score(), weak.passwordLength(), weak.reuseCount(),
+                                weak.id()))
+                        .toList();
+        var report = cached.report();
+        byte[] csv = scanReportCsvWriter.write(username, cached.scannedAt(),
+                report.scanned(), report.weakCount(), report.tagged(),
+                report.untagged(), report.failed(), report.truncated(),
+                rows, bom);
+        String filename = com.example.safeaccounts.service.csv.CsvFilenames
+                .forScanReport(username, java.time.Instant.now());
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.setContentType(
+                org.springframework.http.MediaType.parseMediaType("text/csv; charset=utf-8"));
+        headers.set(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
+                "attachment; filename=\"" + filename + "\"");
+        headers.setCacheControl("no-store");
+        headers.setContentLength(csv.length);
+        return new org.springframework.http.ResponseEntity<>(csv, headers,
+                org.springframework.http.HttpStatus.OK);
     }
 
     /** Отчёт админского импорта из flash (PRG); без flash — на форму. */

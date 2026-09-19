@@ -31,6 +31,12 @@ public final class CsvFilenames {
                 + ".csv";
     }
 
+    /** Отчёт скана слабых паролей: {@code scan-report-<username>-<timestamp>.csv}. */
+    public static String forScanReport(String username, Instant now) {
+        return "scan-report-" + safeFilenamePart(username) + "-" + compactTimestamp(now)
+                + ".csv";
+    }
+
     /**
      * Нейтральная часть имени файла из username: только [A-Za-z0-9._-]
      * (остальное → {@code _}). Кириллица и разделители путей безопасно

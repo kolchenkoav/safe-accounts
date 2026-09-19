@@ -40,6 +40,23 @@ public class WeakPasswordEvaluator {
     }
 
     /**
+     * Чистая оценка + score (для CSV-отчёта): null в score = пароль длиннее
+     * гварда zxcvbn ({@link #MAX_ZXCVBN_LENGTH}) и стойкость не измерялась.
+     */
+    public EvalResult evaluateDetailed(String password, int reuseCount, WeakScanConfig cfg) {
+        List<String> reasons = evaluate(password, reuseCount, cfg);
+        Integer score = null;
+        if (password != null && !password.isEmpty() && password.length() <= MAX_ZXCVBN_LENGTH) {
+            score = zxcvbn.measure(password).getScore();
+        }
+        return new EvalResult(reasons, score);
+    }
+
+    /** Результат детальной оценки: причины + score (null = не измерялся). */
+    public record EvalResult(List<String> reasons, Integer score) {
+    }
+
+    /**
      * @param password   расшифрованный пароль записи (null/пустой = не оценивается,
      *                   G1: пустой пароль при обновлении означает «не менять»)
      * @param reuseCount сколько записей пользователя используют этот же пароль

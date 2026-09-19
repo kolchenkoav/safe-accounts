@@ -21,6 +21,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -87,8 +88,39 @@ public class VaultScanService {
         this.transactionTemplate = transactionTemplate;
     }
 
-    /** Слабая запись в отчёте: расшифрованный name + причины (без пароля). */
-    public record WeakEntry(UUID id, String name, List<String> reasons) {
+    /**
+     * Слабая запись в отчёте: расшифрованные метаданные + причины (без
+     * пароля). score = null, если пароль длиннее гварда zxcvbn (не измерялся).
+     */
+    public record WeakEntry(UUID id, String name, String site, String login,
+                            List<String> reasons, Integer score,
+                            int passwordLength, int reuseCount) {
+    }
+
+    /**
+     * Снимок последнего скана сейфа (для CSV-экспорта отчёта): отчёт,
+     * время и полные строки слабых записей. Ключ кэша — target.
+     */
+    public record CachedScan(ScanReport report, Instant scannedAt,
+                             List<WeakEntry> weakEntries) {
+    }
+
+    /**
+     * Кэш последнего скана: targetUserId → снимок. Single-instance —
+     * как RateLimiter; при горизонтальном масштабировании нужен общий кэш.
+     * Инвалидация — только новый скан (правки записей НЕ инвалидируют:
+     * отчёт — снимок, cached scannedAt это фиксирует). Без TTL: записи
+     * вытесняются при следующем скане того же target; размер ограничен
+     * числом пользователей (одна запись на пользователя).
+     * Ключ — TARGET: admin-скан пишет под target'а, чтобы сам target видел
+     * свой отчёт.
+     */
+    private final java.util.concurrent.ConcurrentHashMap<UUID, CachedScan> lastScanByTarget =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Последний скан сейфа target; пусто — скан ещё не выполнялся (после рестарта). */
+    public java.util.Optional<CachedScan> lastScan(User target) {
+        return java.util.Optional.ofNullable(lastScanByTarget.get(target.getId()));
     }
 
     /**
@@ -179,19 +211,24 @@ public class VaultScanService {
             }
         } while (page.hasNext());
 
-        // Классификация + расшифровка name только для слабых.
+        // Классификация + расшифровка метаданных только для слабых.
         WeakScanConfig cfg = new WeakScanConfig(scanProperties.getWeakScore());
         Set<UUID> weakIds = new HashSet<>();
         List<WeakEntry> weakEntries = new ArrayList<>();
         for (int i = 0; i < scannedEntries.size(); i++) {
             VaultEntry entry = scannedEntries.get(i);
             String password = decryptedPasswords.get(i);
-            List<String> reasons = evaluator.evaluate(
+            var evalResult = evaluator.evaluateDetailed(
                     password, reuseCounts.getOrDefault(sha256Hex(password), 0), cfg);
-            if (!reasons.isEmpty()) {
+            if (!evalResult.reasons().isEmpty()) {
                 weakIds.add(entry.getId());
                 String name = cryptoService.decrypt(entry.getNameEnc(), dek);
-                weakEntries.add(new WeakEntry(entry.getId(), name, List.copyOf(reasons)));
+                String site = cryptoService.decrypt(entry.getSiteEnc(), dek);
+                String login = cryptoService.decrypt(entry.getLoginEnc(), dek);
+                weakEntries.add(new WeakEntry(entry.getId(), name, site, login,
+                        List.copyOf(evalResult.reasons()), evalResult.score(),
+                        password.length(),
+                        reuseCounts.getOrDefault(sha256Hex(password), 0)));
             }
         }
 
@@ -253,6 +290,13 @@ public class VaultScanService {
                         "failed", failed,
                         "truncated", truncated,
                         "durationMs", durationMs));
+
+        // Кэш последнего скана — ПОД TARGET (admin-скан пишет под target'а).
+        // Последняя операция метода: откат TX тегов после этой точки невозможен.
+        lastScanByTarget.put(target.getId(), new CachedScan(
+                new ScanReport(scanned, weakIds.size(), tagged, untagged,
+                        failed, truncated, List.copyOf(weakEntries)),
+                java.time.Instant.now(), List.copyOf(weakEntries)));
 
         return new ScanReport(scanned, weakIds.size(), tagged, untagged,
                 failed, truncated, List.copyOf(weakEntries));
