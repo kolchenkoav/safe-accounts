@@ -306,8 +306,9 @@ public class WebAdminController {
         }
         var cached = scanService.lastScan(target);
         if (cached.isEmpty()) {
+            // Flash сразу на финальную страницу (см. пояснение в user-варианте).
             redirectAttributes.addFlashAttribute("flashError", "Сначала запустите скан");
-            return "redirect:/web/admin/users/" + id + "/vault/scan/report";
+            return "redirect:/web/admin/users";
         }
         return buildScanExportResponse(target.getUsername(), cached.get(), bom);
     }

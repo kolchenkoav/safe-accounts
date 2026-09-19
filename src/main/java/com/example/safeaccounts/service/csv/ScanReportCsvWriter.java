@@ -6,7 +6,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -58,12 +57,15 @@ public class ScanReportCsvWriter {
         sb.append("# untagged,").append(untagged).append("\r\n");
         sb.append("# failed,").append(failed).append("\r\n");
         sb.append("# truncated,").append(truncated).append("\r\n");
+        // Примечание о снимке: записи, изменённые ПОСЛЕ скана, не отражены.
+        sb.append("# Снимок отчёта: ").append(TS.format(scannedAt)).append(
+                "; записи, изменённые после скана, в файле не отражены\r\n");
         sb.append(HEADER).append("\r\n");
         for (VaultScanWeakRow row : weakEntries) {
-            sb.append(escape(row.name())).append(',');
-            sb.append(escape(row.site())).append(',');
-            sb.append(escape(row.username())).append(',');
-            sb.append(escape(String.join("; ", row.reasons()))).append(',');
+            sb.append(escape(guardFormula(row.name()))).append(',');
+            sb.append(escape(guardFormula(row.site()))).append(',');
+            sb.append(escape(guardFormula(row.username()))).append(',');
+            sb.append(escape(guardFormula(String.join("; ", row.reasons())))).append(',');
             sb.append(row.score() == null ? "" : String.valueOf(row.score())).append(',');
             sb.append(row.passwordLength()).append(',');
             sb.append(row.reuseCount()).append(',');
@@ -107,6 +109,27 @@ public class ScanReportCsvWriter {
         }
         sb.append('"');
         return sb.toString();
+    }
+
+    /**
+     * Formula-injection гвард (CSV Tool Injection): ячейки, начинающиеся
+     * с = + - @ TAB, Excel интерпретирует как формулы (например,
+     * {@code =WEBSERVICE(...)} — экзфильтрация данных на открытие файла).
+     * Значения из пользовательских полей сейфа (name/site/login) с такими
+     * ведущими символами получают префикс {@code '}. BOM-опция этого файла
+     * целится именно в Excel — гвард обязателен. Числовые колонки не
+     * трогаются.
+     */
+    static String guardFormula(String value) {
+        if (value == null || value.isEmpty()) {
+            return value;
+        }
+        char first = value.charAt(0);
+        if (first == '=' || first == '+' || first == '-' || first == '@'
+                || first == '\t') {
+            return "'" + value;
+        }
+        return value;
     }
 
     /** Одна строка CSV-отчёта (данные из VaultScanService.WeakEntry). */

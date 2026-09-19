@@ -379,8 +379,11 @@ model.addAttribute("entryForm", new EntryForm(entry.name(), entry.site(), entry.
                                    RedirectAttributes redirectAttributes) {
         var cached = vaultScanService.lastScan(principal.user());
         if (cached.isEmpty()) {
+            // Flash ставим СРАЗУ на /web/entries: redirect на страницу отчёта,
+            // чей GET без flash сам редиректит дальше, съедает FlashMap —
+            // сообщение не доехало бы до пользователя.
             redirectAttributes.addFlashAttribute("flashError", "Сначала запустите скан");
-            return "redirect:/web/entries/scan/report";
+            return "redirect:/web/entries";
         }
         return scanExportResponse(principal.user().getUsername(), cached.get(), bom);
     }

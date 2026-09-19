@@ -1,6 +1,5 @@
 package com.example.safeaccounts.service;
 
-import com.nulabinc.zxcvbn.Strength;
 import com.nulabinc.zxcvbn.Zxcvbn;
 import org.springframework.stereotype.Component;
 
@@ -42,31 +41,21 @@ public class WeakPasswordEvaluator {
     /**
      * Чистая оценка + score (для CSV-отчёта): null в score = пароль длиннее
      * гварда zxcvbn ({@link #MAX_ZXCVBN_LENGTH}) и стойкость не измерялась.
+     *
+     * <p>ЕДИНСТВЕННОЕ место вызова zxcvbn (fix CPU ×2): раньше
+     * {@code evaluateDetailed} звал {@code evaluate()} (measure №1) и делал
+     * ещё один measure №2 — а zxcvbn.measure() — самый дорогой шаг скана.
+     *
+     * <p>zxcvbn-DoS гвард (fix CRITICAL): сложность measure() ~ O(n²) —
+     * 4096 симв ≈ 123 c, что делает скан DoS-able. Пароли длиннее 200
+     * символов по score не оцениваются: такой пароль заведомо не слабый
+     * по score; оценка по длине/charset/reuse остаётся.
      */
     public EvalResult evaluateDetailed(String password, int reuseCount, WeakScanConfig cfg) {
-        List<String> reasons = evaluate(password, reuseCount, cfg);
-        Integer score = null;
-        if (password != null && !password.isEmpty() && password.length() <= MAX_ZXCVBN_LENGTH) {
-            score = zxcvbn.measure(password).getScore();
-        }
-        return new EvalResult(reasons, score);
-    }
-
-    /** Результат детальной оценки: причины + score (null = не измерялся). */
-    public record EvalResult(List<String> reasons, Integer score) {
-    }
-
-    /**
-     * @param password   расшифрованный пароль записи (null/пустой = не оценивается,
-     *                   G1: пустой пароль при обновлении означает «не менять»)
-     * @param reuseCount сколько записей пользователя используют этот же пароль
-     * @param cfg        снимок конфигурации скана
-     * @return список причин слабости; пустой список = сильный пароль
-     */
-    public List<String> evaluate(String password, int reuseCount, WeakScanConfig cfg) {
         List<String> reasons = new ArrayList<>();
+        Integer score = null;
         if (password == null || password.isEmpty()) {
-            return reasons;
+            return new EvalResult(reasons, null);
         }
         if (reuseCount >= 2) {
             // Русская плюрализация: 1 запись (кроме 11), иначе — записями.
@@ -84,17 +73,29 @@ public class WeakPasswordEvaluator {
         } else if (password.matches("[a-z]+")) {
             reasons.add("Вырожденный набор символов");
         }
-        // zxcvbn-DoS гвард (fix CRITICAL): сложность measure() ~ O(n²) —
-        // 4096 симв ≈ 123 c, что делает скан DoS-able. Пароли длиннее 200
-        // символов по score не оцениваются: такой пароль заведомо не слабый
-        // по score; оценка по длине/charset/reuse остаётся.
         if (password.length() <= MAX_ZXCVBN_LENGTH) {
-            Strength strength = zxcvbn.measure(password);
-            int score = strength.getScore();
+            score = zxcvbn.measure(password).getScore();
             if (score <= cfg.weakScore()) {
                 reasons.add("Простой пароль (оценка стойкости " + score + " из 4)");
             }
         }
-        return reasons;
+        return new EvalResult(reasons, score);
+    }
+
+    /** Результат детальной оценки: причины + score (null = не измерялся). */
+    public record EvalResult(List<String> reasons, Integer score) {
+    }
+
+    /**
+     * @param password   расшифрованный пароль записи (null/пустой = не оценивается,
+     *                   G1: пустой пароль при обновлении означает «не менять»)
+     * @param reuseCount сколько записей пользователя используют этот же пароль
+     * @param cfg        снимок конфигурации скана
+     * @return список причин слабости; пустой список = сильный пароль
+     */
+    public List<String> evaluate(String password, int reuseCount, WeakScanConfig cfg) {
+        // Делегирование: один вызов measure() на пароль — вся логика (включая
+        // DoS-гвард) живёт в evaluateDetailed, дубли больше нет.
+        return evaluateDetailed(password, reuseCount, cfg).reasons();
     }
 }

@@ -114,6 +114,10 @@ public class VaultScanService {
      * числом пользователей (одна запись на пользователя).
      * Ключ — TARGET: admin-скан пишет под target'а, чтобы сам target видел
      * свой отчёт.
+     * Цена (осознанный компромисс): при 10k записей на пользователя снимок
+     * ~5–10 МБ; одна запись на пользователя, вымывается при следующем
+     * скане того же target. При горизонтальном масштабировании — общий
+     * кэш с eviction (Caffeine) — deferred.
      */
     private final java.util.concurrent.ConcurrentHashMap<UUID, CachedScan> lastScanByTarget =
             new java.util.concurrent.ConcurrentHashMap<>();

