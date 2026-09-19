@@ -17,12 +17,26 @@ public final class CsvFilenames {
     public static final String EXPORT_WARNING_HEADER = "X-Vault-Export-Warning";
     public static final String EXPORT_WARNING_VALUE = "csv-contains-plaintext-passwords";
 
+    /** Отчёт скана НЕ содержит паролей — только метаданные аккаунтов (G2). */
+    public static final String SCAN_WARNING_VALUE = "scan-report-contains-account-metadata";
+
     private CsvFilenames() {
     }
 
     /** Собственный сейф пользователя: {@code vault-<username>-<timestamp>.csv}. */
     public static String forUser(String username, Instant now) {
         return "vault-" + safeFilenamePart(username) + "-" + compactTimestamp(now) + ".csv";
+    }
+
+    /** Собственный отчёт скана: {@code scan-<username>-<timestamp>.csv}. */
+    public static String forScan(String username, Instant now) {
+        return "scan-" + safeFilenamePart(username) + "-" + compactTimestamp(now) + ".csv";
+    }
+
+    /** Административный экспорт отчёта скана: {@code scan-user-<username>-<ts>.csv}. */
+    public static String forScanTargetUser(String username, Instant now) {
+        return "scan-user-" + safeFilenamePart(username) + "-" + compactTimestamp(now)
+                + ".csv";
     }
 
     /** Административный экспорт чужого сейфа: {@code vault-user-<username>-<timestamp>.csv}. */

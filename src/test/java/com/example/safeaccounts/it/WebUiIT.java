@@ -29,6 +29,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.model;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
@@ -83,6 +84,7 @@ class WebUiIT {
 
     @BeforeEach
     void cleanDatabase() {
+        rateLimiter.reset();
         transactionTemplate.executeWithoutResult(status -> {
             auditEventRepository.deleteAll();
             vaultEntryRepository.deleteAll();
@@ -1097,8 +1099,6 @@ class WebUiIT {
     }
 
     /** Квота: второй POST подряд → flash «повторите через N сек» + redirect. */
-
-    /** Квота: второй POST подряд → flash «повторите через N сек» + redirect. */
     @Test
     void secondScanInWindowShowsFlashAndRedirects() throws Exception {
         registerUser("webscan-quota");
@@ -1117,6 +1117,133 @@ class WebUiIT {
                         org.hamcrest.Matchers.containsString("повторите через")))
                 .andReturn();
         assertThat(second.getRequest().getSession(false)).isNotNull();
+    }
+
+    /** G2-отчёт: CSV-экспорт — преамбула, строка слабой записи, БЕЗ паролей. */
+    @Test
+    void scanReportExportCsvContainsMetadataWithoutPasswords() throws Exception {
+        registerUser("scanexport-user");
+        MockHttpSessionHolder holder = login("scanexport-user");
+        createEntry(holder, "Слабая-Export", "https://weak.example.com", "alice-login",
+                "123456");
+        createEntry(holder, "Сильная-Export", "https://strong.example.com",
+                "bob-login", "Zk9#mQ2$vL8!wR4&xJ6%");
+
+        mockMvc.perform(post("/web/entries/scan").session(holder.session()).with(csrf()))
+                .andExpect(status().is3xxRedirection());
+
+        // Кнопка экспорта присутствует на странице отчёта (GET-форма)
+        mockMvc.perform(get("/web/entries/scan/report").session(holder.session()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers
+                                .containsString("/web/entries/scan/report/export"),
+                        org.hamcrest.Matchers
+                                .containsString("Скачать полный отчёт (CSV)"))));
+
+        MvcResult export = mockMvc.perform(get("/web/entries/scan/report/export")
+                        .session(holder.session()))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("text/csv;charset=utf-8"))
+                .andExpect(header().string("X-Vault-Export-Warning",
+                        "scan-report-contains-account-metadata"))
+                .andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("attachment; filename=\"scan-")))
+                .andReturn();
+        // Читаем как UTF-8 явно: text/csv;charset=utf-8 в заголовке не всегда
+        // учитывается getContentAsString() в MockMvc
+        String csv = new String(export.getResponse().getContentAsByteArray(),
+                java.nio.charset.StandardCharsets.UTF_8);
+        // Преамбула-агрегаты + заголовок колонок (точные счётчики не проверяем —
+        // они зависят от порядка тестов в классе)
+        assertThat(csv).contains("# Отчёт по слабым паролям")
+                .contains("# scanned_at: ")
+                .contains("# проверено: ")
+                .contains("# слабых: ")
+                .contains("name,url,username,reasons,score,password_length,reuse_count,entry_id");
+        // Строка слабой записи: name/site/login/причина (сильной записи нет)
+        assertThat(csv).contains("Слабая-Export")
+                .contains("https://weak.example.com")
+                .contains("alice-login")
+                .contains("Слишком короткий (меньше 12 символов)")
+                .doesNotContain("Сильная-Export");
+        // Пароли (слабый и сильный) в файле ОТСУТСТВУЮТ
+        assertThat(csv).doesNotContain("123456").doesNotContain("Zk9#mQ2$vL8!wR4&xJ6%");
+
+        // bom=true → тело начинается с EF BB BF
+        MvcResult bomExport = mockMvc.perform(get("/web/entries/scan/report/export")
+                        .session(holder.session()).param("bom", "true"))
+                .andExpect(status().isOk())
+                .andReturn();
+        byte[] body = bomExport.getResponse().getContentAsByteArray();
+        assertThat(body[0]).isEqualTo((byte) 0xEF);
+        assertThat(body[1]).isEqualTo((byte) 0xBB);
+        assertThat(body[2]).isEqualTo((byte) 0xBF);
+    }
+
+    /** Экспорт ДО любого скана → flash «Сначала запустите» + redirect. */
+    @Test
+    void scanReportExportBeforeScanRedirectsWithFlash() throws Exception {
+        registerUser("scanexport-empty");
+        MockHttpSessionHolder holder = login("scanexport-empty");
+
+        mockMvc.perform(get("/web/entries/scan/report/export").session(holder.session()))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/entries"))
+                .andExpect(flash().attribute("flashError",
+                        org.hamcrest.Matchers.containsString("Сначала запустите")));
+    }
+
+    /** Админ-экспорт: filename scan-user-*, строки TARGET (не админа). */
+    @Test
+    void adminScanReportExportUsesTargetCacheAndScanUserFilename() throws Exception {
+        registerUser("scanexp-admin");
+        transactionTemplate.executeWithoutResult(status -> userRepository
+                .findByUsername("scanexp-admin").orElseThrow()
+                .changeRole("ROLE_ADMIN", java.time.Instant.now()));
+        MockHttpSessionHolder adminHolder = login("scanexp-admin");
+
+        registerUser("scanexp-target");
+        MockHttpSessionHolder targetHolder = login("scanexp-target");
+        createEntry(targetHolder, "Target-Weak", "https://t.example.com", "target-login", "123456");
+        UUID targetId = userRepository.findByUsername("scanexp-target").orElseThrow().getId();
+
+        // target запускает свой скан (кэш — под target)
+        mockMvc.perform(post("/web/entries/scan").session(targetHolder.session()).with(csrf()))
+                .andExpect(status().is3xxRedirection());
+
+        MvcResult export = mockMvc.perform(get("/web/admin/users/" + targetId
+                        + "/vault/scan/report/export").session(adminHolder.session()))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("filename=\"scan-user-")))
+                .andReturn();
+        String csv = export.getResponse().getContentAsString(
+                java.nio.charset.StandardCharsets.UTF_8);
+        // Строки TARGET (не админа): слабая запись target'а присутствует
+        assertThat(csv).contains("Target-Weak").contains("target-login");
+        assertThat(csv).doesNotContain("scanexp-admin");
+    }
+
+    /** Админ-экспорт без отчёта у target → flash + redirect на список. */
+    @Test
+    void adminScanReportExportWithoutScanRedirects() throws Exception {
+        registerUser("scanexp-admin2");
+        transactionTemplate.executeWithoutResult(status -> userRepository
+                .findByUsername("scanexp-admin2").orElseThrow()
+                .changeRole("ROLE_ADMIN", java.time.Instant.now()));
+        MockHttpSessionHolder adminHolder = login("scanexp-admin2");
+
+        registerUser("scanexp-target2");
+        UUID targetId = userRepository.findByUsername("scanexp-target2").orElseThrow().getId();
+
+        mockMvc.perform(get("/web/admin/users/" + targetId + "/vault/scan/report/export")
+                        .session(adminHolder.session()))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/web/admin/users"))
+                .andExpect(flash().attribute("flashError",
+                        org.hamcrest.Matchers.containsString("нет отчёта")));
     }
 
     /** Админ-скан чужого сейфа: баннер target; не-админ — 403. */

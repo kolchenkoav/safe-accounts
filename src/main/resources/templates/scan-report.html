@@ -99,6 +99,19 @@
 
     <!-- Ссылки параметризованы: user → /web/entries, admin → /web/admin/users -->
     <div class="actions">
+        <!-- G2-экспорт: полный отчёт скана в CSV (GET-форма, CSRF не нужен;
+             BOM для Excel). Паролей в файле НЕТ — только сайты/логины/причины. -->
+        <form
+            th:action="@{/web/entries/scan/report/export}"
+            method="get"
+            class="inline scan-export-form"
+            data-confirm="Отчёт содержит сайты и логины (без паролей). Скачать?"
+        >
+            <label class="checkbox compact"
+                ><input type="checkbox" name="bom" value="true" /> BOM</label
+            >
+            <button type="submit" class="small">Скачать полный отчёт (CSV)</button>
+        </form>
         <a class="button" th:href="@{/web/entries}">К записям</a>
         <a
             class="button"

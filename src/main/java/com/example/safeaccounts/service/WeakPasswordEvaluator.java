@@ -47,9 +47,19 @@ public class WeakPasswordEvaluator {
      * @return список причин слабости; пустой список = сильный пароль
      */
     public List<String> evaluate(String password, int reuseCount, WeakScanConfig cfg) {
+        return evaluateDetailed(password, reuseCount, cfg).reasons();
+    }
+
+    /** Детальный результат: причины + zxcvbn score (null — не измерялся: длина > 200). */
+    public record ScoredReasons(List<String> reasons, Integer score) {
+    }
+
+    /** То же, что {@link #evaluate}, но вместе со score (для отчёта сканера). */
+    public ScoredReasons evaluateDetailed(String password, int reuseCount,
+                                          WeakScanConfig cfg) {
         List<String> reasons = new ArrayList<>();
         if (password == null || password.isEmpty()) {
-            return reasons;
+            return new ScoredReasons(reasons, null);
         }
         if (reuseCount >= 2) {
             // Русская плюрализация: 1 запись (кроме 11), иначе — записями.
@@ -71,13 +81,14 @@ public class WeakPasswordEvaluator {
         // 4096 симв ≈ 123 c, что делает скан DoS-able. Пароли длиннее 200
         // символов по score не оцениваются: такой пароль заведомо не слабый
         // по score; оценка по длине/charset/reuse остаётся.
+        Integer score = null;
         if (password.length() <= MAX_ZXCVBN_LENGTH) {
             Strength strength = zxcvbn.measure(password);
-            int score = strength.getScore();
+            score = strength.getScore();
             if (score <= cfg.weakScore()) {
                 reasons.add("Простой пароль (оценка стойкости " + score + " из 4)");
             }
         }
-        return reasons;
+        return new ScoredReasons(reasons, score);
     }
 }

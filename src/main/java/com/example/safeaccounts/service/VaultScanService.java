@@ -1,5 +1,6 @@
 package com.example.safeaccounts.service;
 
+import com.example.safeaccounts.audit.AuditService;
 import com.example.safeaccounts.crypto.AesGcmCryptoService;
 import com.example.safeaccounts.audit.AuditService;
 import com.example.safeaccounts.crypto.WrappedDek;
@@ -55,6 +56,22 @@ public class VaultScanService {
     /** Служебный per-user тег слабых записей (решение §7.3 плана). */
     public static final String WEAK_PASSWORD_TAG_NAME = "weak-password";
 
+    /**
+     * Кэш последнего скана (G2-отчёт, план feat-weak-password-report §2.2):
+     * targetUserId → снимок отчёта. Single-instance — как RateLimiter; при
+     * горизонтальном масштабировании нужен общий кэш. Инвалидация — только
+     * новый скан (правки записей НЕ инвалидируют: отчёт — снимок, честность
+     * обеспечивает scannedAt). Ключ кэша — TARGET: admin-скан пишет под
+     * target'а, чтобы сам target видел свой отчёт.
+     */
+    private final java.util.concurrent.ConcurrentHashMap<UUID, CachedScan> lastScanByTarget =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Снимок последнего скана: отчёт + время + полные строки слабых записей. */
+    public record CachedScan(ScanReport report, java.time.Instant scannedAt,
+                             List<WeakEntry> weakEntries) {
+    }
+
     /** Лимит записей скана — согласован с MAX_EXPORT_ROWS (10 000). */
     public static final int MAX_SCAN_ENTRIES = 10_000;
 
@@ -68,6 +85,7 @@ public class VaultScanService {
     private final AuditService auditService;
     private final RateLimiter rateLimiter;
     private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+    private final com.example.safeaccounts.service.csv.CsvWriter csvWriter;
 
     public VaultScanService(VaultEntryRepository vaultEntryRepository,
                             TagService tagService,
@@ -76,7 +94,8 @@ public class VaultScanService {
                             ScanProperties scanProperties,
                             AuditService auditService,
                             RateLimiter rateLimiter,
-                            org.springframework.transaction.support.TransactionTemplate transactionTemplate) {
+                            org.springframework.transaction.support.TransactionTemplate transactionTemplate,
+                            com.example.safeaccounts.service.csv.CsvWriter csvWriter) {
         this.vaultEntryRepository = vaultEntryRepository;
         this.tagService = tagService;
         this.cryptoService = cryptoService;
@@ -85,10 +104,14 @@ public class VaultScanService {
         this.auditService = auditService;
         this.rateLimiter = rateLimiter;
         this.transactionTemplate = transactionTemplate;
+        this.csvWriter = csvWriter;
     }
 
-    /** Слабая запись в отчёте: расшифрованный name + причины (без пароля). */
-    public record WeakEntry(UUID id, String name, List<String> reasons) {
+    /** Слабая запись в отчёте: расшифрованные метаданные + причины (без пароля).
+     *  score = null, если пароль длиннее гварда zxcvbn (не измерялся). */
+    public record WeakEntry(UUID id, String name, String site, String login,
+                            List<String> reasons, Integer score,
+                            int passwordLength, int reuseCount) {
     }
 
     /**
@@ -102,6 +125,13 @@ public class VaultScanService {
     public record ScanReport(int scanned, int weakCount, int tagged, int untagged,
                              int failed, boolean truncated,
                              List<WeakEntry> weakEntries) {
+    }
+
+    /**
+     * Последний скан сейфа target (кэш сервиса); пусто — скан ещё не запускался.
+     */
+    public java.util.Optional<CachedScan> lastScan(User target) {
+        return java.util.Optional.ofNullable(lastScanByTarget.get(target.getId()));
     }
 
     /**
@@ -179,19 +209,24 @@ public class VaultScanService {
             }
         } while (page.hasNext());
 
-        // Классификация + расшифровка name только для слабых.
+        // Классификация + расшифровка метаданных только для слабых.
         WeakScanConfig cfg = new WeakScanConfig(scanProperties.getWeakScore());
         Set<UUID> weakIds = new HashSet<>();
         List<WeakEntry> weakEntries = new ArrayList<>();
         for (int i = 0; i < scannedEntries.size(); i++) {
             VaultEntry entry = scannedEntries.get(i);
             String password = decryptedPasswords.get(i);
-            List<String> reasons = evaluator.evaluate(
+            var evalResult = evaluator.evaluateDetailed(
                     password, reuseCounts.getOrDefault(sha256Hex(password), 0), cfg);
-            if (!reasons.isEmpty()) {
+            if (!evalResult.reasons().isEmpty()) {
                 weakIds.add(entry.getId());
                 String name = cryptoService.decrypt(entry.getNameEnc(), dek);
-                weakEntries.add(new WeakEntry(entry.getId(), name, List.copyOf(reasons)));
+                String site = cryptoService.decrypt(entry.getSiteEnc(), dek);
+                String login = cryptoService.decrypt(entry.getLoginEnc(), dek);
+                weakEntries.add(new WeakEntry(entry.getId(), name, site, login,
+                        List.copyOf(evalResult.reasons()), evalResult.score(),
+                        password.length(),
+                        reuseCounts.getOrDefault(sha256Hex(password), 0)));
             }
         }
 
@@ -254,8 +289,70 @@ public class VaultScanService {
                         "truncated", truncated,
                         "durationMs", durationMs));
 
-        return new ScanReport(scanned, weakIds.size(), tagged, untagged,
-                failed, truncated, List.copyOf(weakEntries));
+        // Кэш последнего скана — ПОД TARGET (admin-скан пишет под target'а).
+        lastScanByTarget.put(target.getId(), new CachedScan(
+                new ScanReport(scanned, weakIds.size(), tagged, untagged,
+                        failed, truncated, List.copyOf(weakEntries)),
+                java.time.Instant.now(), List.copyOf(weakEntries)));
+
+        return lastScanByTarget.get(target.getId()).report();
+    }
+
+    /**
+     * Собирает байты CSV полного отчёта скана (преамбула-агрегаты `#`,
+     * колонки name,url,username,reasons,score,password_length,reuse_count,
+     * entry_id — БЕЗ паролей) + пишет аудит VAULT_SCAN_REPORT_EXPORTED
+     * (actor, target, weakCount, csvSha256, bytes, bom — только агрегаты).
+     */
+    public ScanCsvFile buildReportCsv(CachedScan cached,
+                                      com.example.safeaccounts.domain.User actor,
+                                      com.example.safeaccounts.domain.User target,
+                                      boolean adminFilename, boolean bom) {
+        var report = cached.report();
+        java.util.List<java.util.List<String>> rows = new java.util.ArrayList<>();
+        rows.add(java.util.List.of("# Отчёт по слабым паролям"));
+        rows.add(java.util.List.of("# scanned_at: " + cached.scannedAt().toString()));
+        rows.add(java.util.List.of("# проверено: " + report.scanned()));
+        rows.add(java.util.List.of("# слабых: " + report.weakCount()));
+        rows.add(java.util.List.of("# помечено: " + report.tagged()));
+        rows.add(java.util.List.of("# снято: " + report.untagged()));
+        rows.add(java.util.List.of("# ошибок чтения: " + report.failed()));
+        rows.add(java.util.List.of("# неполный скан: " + (report.truncated() ? "да" : "нет")));
+        rows.add(java.util.List.of("name", "url", "username", "reasons", "score",
+                "password_length", "reuse_count", "entry_id"));
+        for (WeakEntry weak : cached.weakEntries()) {
+            rows.add(java.util.List.of(
+                    weak.name(),
+                    weak.site() == null ? "" : weak.site(),
+                    weak.login() == null ? "" : weak.login(),
+                    String.join("; ", weak.reasons()),
+                    weak.score() == null ? ">200" : String.valueOf(weak.score()),
+                    String.valueOf(weak.passwordLength()),
+                    String.valueOf(weak.reuseCount()),
+                    weak.id().toString()));
+        }
+        byte[] csv = csvWriter.writeRows(rows, bom);
+
+        String filename = adminFilename
+                ? com.example.safeaccounts.service.csv.CsvFilenames
+                        .forScanTargetUser(target.getUsername(), java.time.Instant.now())
+                : com.example.safeaccounts.service.csv.CsvFilenames
+                        .forScan(target.getUsername(), java.time.Instant.now());
+
+        long bytes = csv.length;
+        auditService.record(actor, AuditService.VAULT_SCAN_REPORT_EXPORTED, null,
+                "User", target.getId().toString(),
+                Map.of("actor", actor.getUsername(),
+                        "target", target.getUsername(),
+                        "weakCount", report.weakCount(),
+                        "csvSha256", sha256Hex(new String(csv, StandardCharsets.UTF_8)),
+                        "bytes", bytes,
+                        "bom", bom));
+        return new ScanCsvFile(csv, filename);
+    }
+
+    /** Готовый CSV-файл отчёта: байты + имя файла для Content-Disposition. */
+    public record ScanCsvFile(byte[] csv, String filename) {
     }
 
     private static String sha256Hex(String value) {

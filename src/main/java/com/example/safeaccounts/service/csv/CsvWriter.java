@@ -31,6 +31,36 @@ public class CsvWriter {
     static final byte[] BOM = {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
 
     /**
+     * Универсальная запись произвольных строк CSV (первая строка — заголовок).
+     * Используется отчётом скана слабых паролей (G2-отчёт); RFC 4180-экранирование
+     * то же, что в {@link #write}.
+     *
+     * @param rows       строки, включая заголовок первой строкой; значения null → ""
+     * @param includeBom {@code true} — начать вывод с UTF-8 BOM
+     * @return UTF-8 байты готового CSV
+     */
+    public byte[] writeRows(java.util.List<java.util.List<String>> rows, boolean includeBom) {
+        StringBuilder sb = new StringBuilder();
+        for (java.util.List<String> row : rows) {
+            for (int i = 0; i < row.size(); i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                sb.append(escape(row.get(i)));
+            }
+            sb.append("\r\n");
+        }
+        byte[] body = sb.toString().getBytes(StandardCharsets.UTF_8);
+        if (includeBom) {
+            byte[] out = new byte[BOM.length + body.length];
+            System.arraycopy(BOM, 0, out, 0, BOM.length);
+            System.arraycopy(body, 0, out, BOM.length, body.length);
+            return out;
+        }
+        return body;
+    }
+
+    /**
      * Сериализует строки в байты CSV.
      *
      * @param rows       строки данных (без заголовка); пустой список допустим

@@ -91,7 +91,8 @@ class VaultScanServiceTest {
                 mock(org.springframework.transaction.PlatformTransactionManager.class);
         service = new VaultScanService(vaultEntryRepository, tagService, cryptoService,
                 new WeakPasswordEvaluator(), scanProperties, auditService, rateLimiter,
-                new org.springframework.transaction.support.TransactionTemplate(txManager));
+                new org.springframework.transaction.support.TransactionTemplate(txManager),
+                new com.example.safeaccounts.service.csv.CsvWriter());
 
         when(tagService.findOrCreateByName(target, VaultScanService.WEAK_PASSWORD_TAG_NAME))
                 .thenReturn(weakTag);

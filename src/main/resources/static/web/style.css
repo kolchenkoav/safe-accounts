@@ -612,6 +612,14 @@ td {
     font-size: 0.85rem;
 }
 
+/* G2: компактная GET-форма экспорта CSV-отчёта скана (в actions блока). */
+.inline.scan-export-form {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0;
+}
+
 @media (max-width: 600px) {
     .toast-container {
         width: calc(100% - 2rem);
